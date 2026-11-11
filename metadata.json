@@ -1,0 +1,6 @@
+{
+  "name": "Caja Maestra",
+  "description": "Sistema integral de punto de venta, inventario en tiempo real, control de clientes y proveedores, reportes financieros y facturación térmica.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

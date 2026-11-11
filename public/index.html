@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Caja Maestra - Descarga APK Oficial Offline</title>
+  <style>
+    :root {
+      --primary: #1E293B;
+      --primary-dark: #0F172A;
+      --accent: #B45309;
+      --accent-light: #F59E0B;
+      --bg: #F8FAFC;
+      --card-bg: #FFFFFF;
+      --text: #0F172A;
+      --text-muted: #64748B;
+      --success: #10B981;
+      --border: #E2E8F0;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 680px;
+      width: 100%;
+    }
+
+    .header-card {
+      background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
+      color: white;
+      border-radius: 24px;
+      padding: 32px 24px;
+      text-align: center;
+      box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.25);
+      margin-bottom: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .badge {
+      display: inline-block;
+      background: rgba(245, 158, 11, 0.2);
+      color: #FBBF24;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      padding: 4px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      font-size: 32px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+
+    .subtitle {
+      color: #94A3B8;
+      font-size: 16px;
+      max-width: 500px;
+      margin: 0 auto 24px;
+    }
+
+    .download-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+      color: #FFFFFF;
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+      padding: 16px 36px;
+      border-radius: 16px;
+      box-shadow: 0 4px 14px 0 rgba(217, 119, 6, 0.39);
+      transition: all 0.2s ease;
+      cursor: pointer;
+      border: none;
+      width: 100%;
+      max-width: 380px;
+    }
+
+    .download-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px 0 rgba(217, 119, 6, 0.45);
+    }
+
+    .download-btn svg {
+      width: 24px;
+      height: 24px;
+      fill: currentColor;
+    }
+
+    .file-meta {
+      margin-top: 14px;
+      font-size: 13px;
+      color: #94A3B8;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .feature-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+
+    .feature-title {
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--primary);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .feature-desc {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .guide-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 28px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.04);
+    }
+
+    .guide-card h2 {
+      font-size: 20px;
+      color: var(--primary);
+      margin-bottom: 18px;
+      font-weight: 700;
+    }
+
+    .steps-list {
+      list-style: none;
+      counter-reset: step-counter;
+    }
+
+    .step-item {
+      position: relative;
+      padding-left: 44px;
+      margin-bottom: 18px;
+    }
+
+    .step-item::before {
+      counter-increment: step-counter;
+      content: counter(step-counter);
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #EFF6FF;
+      color: #2563EB;
+      font-weight: 700;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #BFDBFE;
+    }
+
+    .step-title {
+      font-weight: 600;
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .step-text {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .qr-section {
+      text-align: center;
+      background: #F1F5F9;
+      border-radius: 16px;
+      padding: 20px;
+      margin-top: 20px;
+      border: 1px dashed #CBD5E1;
+    }
+
+    .qr-placeholder {
+      display: inline-block;
+      background: white;
+      padding: 12px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      margin-bottom: 10px;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-card">
+      <span class="badge">Versión Offline 100% Autónoma</span>
+      <h1>Caja Maestra</h1>
+      <p class="subtitle">Sistema POS, Inventario en Tiempo Real, Facturación, Impresión Térmica 58mm y Seguridad AES-256</p>
+      
+      <a href="/caja-maestra.apk" download="caja-maestra.apk" class="download-btn">
+        <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+        Descargar APK (23.6 MB)
+      </a>
+
+      <div class="file-meta">
+        Archivo: <code>caja-maestra.apk</code> &bull; Sin requerir Play Store ni Deploy
+      </div>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-title">📶 100% Funcional Offline</div>
+        <div class="feature-desc">Base de datos local SQLite con Room en el propio móvil. No requiere conexión a internet para vender, facturar ni escanear.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-title">🔒 Cifrado Seguro AES-256</div>
+        <div class="feature-desc">Protección y encriptación local para salvaguardar tu inventario, ventas y datos de clientes con seguridad de grado bancario.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-title">🖨️ Impresión Térmica 58mm</div>
+        <div class="feature-desc">Compatibilidad para tickets y recibos en impresoras térmicas ESC/POS vía Bluetooth.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-title">📷 Escáner de Códigos</div>
+        <div class="feature-desc">Agiliza la facturación y la carga de productos directamente con la cámara del dispositivo móvil.</div>
+      </div>
+    </div>
+
+    <div class="guide-card">
+      <h2>📱 Pasos para Instalar en tu Celular Android</h2>
+      <ul class="steps-list">
+        <li class="step-item">
+          <div class="step-title">Descarga el archivo APK</div>
+          <div class="step-text">Presiona el botón superior "Descargar APK". Si el navegador te pregunta si deseas guardar el archivo, selecciona <strong>"Descargar de todos modos"</strong>.</div>
+        </li>
+        <li class="step-item">
+          <div class="step-title">Permitir instalación de fuentes desconocidas</div>
+          <div class="step-text">Al abrir el APK, si Android te solicita permisos, toca <em>Configuración</em> y activa el permiso <strong>"Permitir desde esta fuente"</strong> para tu navegador (Chrome, etc.).</div>
+        </li>
+        <li class="step-item">
+          <div class="step-title">Presiona Instalar y Listo</div>
+          <div class="step-text">El instalador del sistema instalará <strong>Caja Maestra</strong> en tu teléfono. Ya puedes abrirla y usarla inmediatamente sin necesidad de ninguna cuenta externa.</div>
+        </li>
+      </ul>
+
+      <div class="qr-section">
+        <div class="qr-placeholder" id="qrcode"></div>
+        <div style="font-size: 13px; color: var(--text-muted); font-weight: 500;">
+          Escanea este código QR con la cámara de tu teléfono para descargar el APK directamente en tu móvil
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      Caja Maestra &bull; Diseñado para gestión comercial ágil, moderna y sin ataduras a la nube.
+    </footer>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const currentUrl = window.location.origin + '/caja-maestra.apk';
+      new QRCode(document.getElementById("qrcode"), {
+        text: currentUrl,
+        width: 140,
+        height: 140,
+        colorDark : "#1E293B",
+        colorLight : "#FFFFFF",
+        correctLevel : QRCode.CorrectLevel.M
+      });
+    });
+  </script>
+</body>
+</html>

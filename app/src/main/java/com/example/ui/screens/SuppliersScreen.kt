@@ -55,6 +55,7 @@ fun SuppliersScreen(
     var isSearchExpanded by remember { mutableStateOf(false) }
     var showAddEditDialog by remember { mutableStateOf(false) }
     var supplierToEdit by remember { mutableStateOf<Supplier?>(null) }
+    var supplierToDelete by remember { mutableStateOf<Supplier?>(null) }
     var selectedSupplierDetail by remember { mutableStateOf<Supplier?>(null) }
 
     val filteredSuppliers = suppliers.filter {
@@ -114,15 +115,23 @@ fun SuppliersScreen(
             if (filteredSuppliers.isEmpty()) {
                 CajaMaestraEmptyState(
                     icon = Icons.Default.Domain,
-                    title = "Sin Proveedores Registrados",
+                    title = if (searchQuery.isNotBlank()) "Sin coincidencias" else "Sin Proveedores Registrados",
                     description = if (searchQuery.isNotBlank())
                         "No se encontraron resultados para '$searchQuery'."
                     else
                         "Registra tus proveedores para gestionar órdenes de compra, términos de pago e historial de compras.",
-                    actionButtonText = "+ Registrar Nuevo Proveedor",
+                    actionButtonText = when {
+                        searchQuery.isNotBlank() -> "Limpiar Búsqueda"
+                        permissions.canCreateSupplier -> "+ Registrar Nuevo Proveedor"
+                        else -> ""
+                    },
                     onActionClick = {
-                        supplierToEdit = null
-                        showAddEditDialog = true
+                        if (searchQuery.isNotBlank()) {
+                            searchQuery = ""
+                        } else if (permissions.canCreateSupplier) {
+                            supplierToEdit = null
+                            showAddEditDialog = true
+                        }
                     }
                 )
             } else {
@@ -265,21 +274,20 @@ fun SuppliersScreen(
                                                 Icon(Icons.Default.Phone, contentDescription = "Llamar", tint = BrandEmerald)
                                             }
                                         }
-                                        IconButton(
-                                            onClick = {
-                                                supplierToEdit = supplier
-                                                showAddEditDialog = true
-                                            },
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Icon(Icons.Default.Edit, contentDescription = "Editar", tint = BrandNavy)
+                                        if (permissions.canCreateSupplier) {
+                                            IconButton(
+                                                onClick = {
+                                                    supplierToEdit = supplier
+                                                    showAddEditDialog = true
+                                                },
+                                                modifier = Modifier.size(36.dp)
+                                            ) {
+                                                Icon(Icons.Default.Edit, contentDescription = "Editar", tint = BrandNavy)
+                                            }
                                         }
                                         if (permissions.canDeleteSupplier) {
                                             IconButton(
-                                                onClick = {
-                                                    viewModel.deleteSupplier(supplier)
-                                                    Toast.makeText(context, "Proveedor eliminado", Toast.LENGTH_SHORT).show()
-                                                },
+                                                onClick = { supplierToDelete = supplier },
                                                 modifier = Modifier.size(36.dp)
                                             ) {
                                                 Icon(Icons.Default.DeleteOutline, contentDescription = "Eliminar", tint = StatusCancelled)
@@ -388,11 +396,15 @@ fun SuppliersScreen(
                                             Text("$dateStr • ${if (p.isCredit) "A Crédito" else "Pagada"}", fontSize = 11.sp, color = TextMuted)
                                         }
                                         Text(
-                                            "${settings.currencySymbol}${String.format(Locale.US, "%.2f", p.total)}",
+                                            if (permissions.canViewSupplierInvestment) {
+                                                "${settings.currencySymbol}${String.format(Locale.US, "%.2f", p.total)}"
+                                            } else {
+                                                "Reservado"
+                                            },
                                             fontFamily = DisplayFontFamily,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 14.sp,
-                                            color = BrandEmeraldDark
+                                            color = if (permissions.canViewSupplierInvestment) BrandEmeraldDark else TextMuted
                                         )
                                     }
                                 }
@@ -425,6 +437,29 @@ fun SuppliersScreen(
             }
         )
     }
+
+    supplierToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { supplierToDelete = null },
+            title = { Text("Eliminar Proveedor", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Deseas eliminar a '${target.name}' del directorio de proveedores?", fontSize = 13.sp) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteSupplier(target)
+                        supplierToDelete = null
+                        Toast.makeText(context, "Proveedor eliminado", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = StatusCancelled)
+                ) {
+                    Text("Eliminar", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { supplierToDelete = null }) { Text("Cancelar") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -442,6 +477,7 @@ fun AddEditSupplierDialog(
     var suppliedProducts by remember { mutableStateOf(initialSupplier?.suppliedProducts ?: "") }
     var paymentTerms by remember { mutableStateOf(initialSupplier?.paymentTerms ?: "Contado") }
     var notes by remember { mutableStateOf(initialSupplier?.notes ?: "") }
+    var validationError by remember { mutableStateOf<String?>(null) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -498,7 +534,10 @@ fun AddEditSupplierDialog(
                 ) {
                     OutlinedTextField(
                         value = name,
-                        onValueChange = { name = it },
+                        onValueChange = {
+                            name = it
+                            validationError = null
+                        },
                         label = { Text("Nombre / Razón Social *") },
                         shape = RoundedCornerShape(12.dp),
                         leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = BrandBlue) },
@@ -569,6 +608,29 @@ fun AddEditSupplierDialog(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    OutlinedTextField(
+                        value = address,
+                        onValueChange = { address = it },
+                        label = { Text("Dirección") },
+                        shape = RoundedCornerShape(12.dp),
+                        leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = notes,
+                        onValueChange = { notes = it },
+                        label = { Text("Notas adicionales") },
+                        shape = RoundedCornerShape(12.dp),
+                        maxLines = 2,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    validationError?.let { err ->
+                        Text(err, color = StatusCancelled, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -583,7 +645,9 @@ fun AddEditSupplierDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (name.isNotBlank()) {
+                            if (name.isBlank()) {
+                                validationError = "El nombre del proveedor es obligatorio."
+                            } else {
                                 onSave(
                                     (initialSupplier ?: Supplier(name = name)).copy(
                                         name = name.trim(),
@@ -593,7 +657,7 @@ fun AddEditSupplierDialog(
                                         email = email.trim(),
                                         address = address.trim(),
                                         suppliedProducts = suppliedProducts.trim(),
-                                        paymentTerms = paymentTerms.trim(),
+                                        paymentTerms = paymentTerms.trim().ifEmpty { "Contado" },
                                         notes = notes.trim()
                                     )
                                 )

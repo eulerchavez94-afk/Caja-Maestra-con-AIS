@@ -5,6 +5,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,6 +45,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 val viewModel: MainViewModel = viewModel()
+                val isSettingsLoaded by viewModel.isSettingsLoaded.collectAsState()
                 val isUserAuthenticated by viewModel.isUserAuthenticated.collectAsState()
                 val currentScreen by viewModel.currentScreen.collectAsState()
                 val settings by viewModel.settings.collectAsState()
@@ -55,8 +58,16 @@ class MainActivity : ComponentActivity() {
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
 
-                // If not authenticated, display Initial Lock Screen directly
-                if (!isUserAuthenticated) {
+                if (!isSettingsLoaded) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(com.example.ui.theme.HudGradient),
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = com.example.ui.theme.BrandAmber)
+                    }
+                } else if (!isUserAuthenticated) {
                     InitialLockScreen(viewModel = viewModel)
                 } else {
                     // Hardware back handler
@@ -213,7 +224,19 @@ class MainActivity : ComponentActivity() {
                         settings = settings,
                         sale = lastSale!!,
                         items = lastItems,
-                        onDismiss = { viewModel.closeReceiptModal() }
+                        onDismiss = { viewModel.closeReceiptModal() },
+                        onCancelSale = {
+                            viewModel.cancelSale(lastSale!!)
+                            viewModel.closeReceiptModal()
+                        },
+                        onPrinterSelected = { name, address ->
+                            viewModel.updateSettings(
+                                settings.copy(
+                                    bluetoothPrinterName = name,
+                                    bluetoothPrinterAddress = address
+                                )
+                            )
+                        }
                     )
                 }
 
@@ -268,7 +291,7 @@ class MainActivity : ComponentActivity() {
                         confirmButton = {
                             Button(
                                 onClick = {
-                                    if (pinAttempt.trim() == settings.masterPin || pinAttempt.trim() == "1234") {
+                                    if (viewModel.verifyMasterPin(pinAttempt)) {
                                         pendingRestrictedScreen?.let { viewModel.navigateTo(it) }
                                         showPinLockModal = false
                                         pendingRestrictedScreen = null

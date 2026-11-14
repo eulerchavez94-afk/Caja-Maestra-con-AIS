@@ -203,19 +203,19 @@ fun DrawerContent(
                         if (isModulePermitted(AppScreen.VINCULAR_WEB)) {
                             HeaderActionTile(
                                 modifier = Modifier.weight(1f),
-                                icon = Icons.Default.CloudSync,
-                                label = "Backup",
+                                icon = Icons.Default.Backup,
+                                label = "Respaldo",
                                 accentColor = BrandEmerald,
                                 onClick = { onNavigate(AppScreen.VINCULAR_WEB); onCloseDrawer() }
                             )
                         }
-                        if (isModulePermitted(AppScreen.RENTAS)) {
+                        if (isModulePermitted(AppScreen.AGENDA)) {
                             HeaderActionTile(
                                 modifier = Modifier.weight(1f),
                                 icon = Icons.Default.CalendarMonth,
                                 label = "Agenda",
                                 accentColor = BrandAmber,
-                                onClick = { onNavigate(AppScreen.RENTAS); onCloseDrawer() }
+                                onClick = { onNavigate(AppScreen.AGENDA); onCloseDrawer() }
                             )
                         }
                     }
@@ -304,7 +304,7 @@ fun DrawerContent(
                         DrawerMenuItem(
                             icon = Icons.Default.BarChart,
                             label = "Reportes Financieros",
-                            subtitle = "25 vistas y exportación PDF/Excel",
+                            subtitle = "41 vistas y exportación PDF/Excel",
                             iconColor = BrandBlue,
                             isSelected = currentScreen == AppScreen.REPORTES,
                             onClick = { onNavigate(AppScreen.REPORTES); onCloseDrawer() }
@@ -368,9 +368,9 @@ fun DrawerContent(
                 if (isModulePermitted(AppScreen.VINCULAR_WEB)) {
                     item {
                         DrawerMenuItem(
-                            icon = Icons.Default.CloudSync,
-                            label = "Salva en Nube (AES-256)",
-                            subtitle = "Copia segura offline/online",
+                            icon = Icons.Default.Backup,
+                            label = "Respaldo Offline (AES-256)",
+                            subtitle = "Exportar y restaurar .cmbak",
                             iconColor = BrandEmerald,
                             isSelected = currentScreen == AppScreen.VINCULAR_WEB,
                             onClick = { onNavigate(AppScreen.VINCULAR_WEB); onCloseDrawer() }

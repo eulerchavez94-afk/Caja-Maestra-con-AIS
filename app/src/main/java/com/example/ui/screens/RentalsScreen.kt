@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -52,6 +53,7 @@ fun RentalsScreen(
     val permissions = remember(settings) { RoleManager.getPermissions(settings) }
 
     var showAddDialog by remember { mutableStateOf(false) }
+    var rentalToDelete by remember { mutableStateOf<RentalLoan?>(null) }
 
     // Only active equipment/item rentals (isRental = true)
     val displayedItems = allRentals.filter { it.isRental }
@@ -90,8 +92,8 @@ fun RentalsScreen(
                     icon = Icons.Default.ShoppingCartCheckout,
                     title = "Sin Rentas Activas",
                     description = "Lleva el control de equipos y mobiliario alquilados a clientes, fechas de retorno y depósitos de garantía.",
-                    actionButtonText = "+ Registrar Nueva Renta",
-                    onActionClick = { showAddDialog = true }
+                    actionButtonText = if (permissions.canCreateRental) "+ Registrar Nueva Renta" else "",
+                    onActionClick = { if (permissions.canCreateRental) showAddDialog = true }
                 )
             } else {
                 LazyColumn(
@@ -204,7 +206,7 @@ fun RentalsScreen(
                                         }
                                         if (permissions.canDeleteRental) {
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            IconButton(onClick = { viewModel.deleteRentalLoan(item) }) {
+                                            IconButton(onClick = { rentalToDelete = item }) {
                                                 Icon(Icons.Default.DeleteOutline, contentDescription = "Eliminar", tint = StatusCancelled)
                                             }
                                         }
@@ -221,7 +223,8 @@ fun RentalsScreen(
     if (showAddDialog) {
         AddRentalDialog(
             onDismiss = { showAddDialog = false },
-            onSave = { contact, itemRental, amount, deposit, notes ->
+            onSave = { contact, itemRental, amount, deposit, durationDays, notes ->
+                val now = System.currentTimeMillis()
                 viewModel.saveRentalLoan(
                     RentalLoan(
                         isRental = true,
@@ -229,10 +232,35 @@ fun RentalsScreen(
                         itemOrReason = itemRental,
                         amount = amount,
                         depositAmount = deposit,
+                        startDate = now,
+                        dueDate = now + durationDays.toLong() * 24L * 3600L * 1000L,
                         notes = notes
                     )
                 )
                 showAddDialog = false
+            }
+        )
+    }
+
+    rentalToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { rentalToDelete = null },
+            title = { Text("Eliminar Renta", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Deseas eliminar la renta de '${target.itemOrReason}' (${target.contactName})?", fontSize = 13.sp) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteRentalLoan(target)
+                        rentalToDelete = null
+                        Toast.makeText(context, "Renta eliminada", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = StatusCancelled)
+                ) {
+                    Text("Eliminar", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { rentalToDelete = null }) { Text("Cancelar") }
             }
         )
     }
@@ -241,13 +269,15 @@ fun RentalsScreen(
 @Composable
 fun AddRentalDialog(
     onDismiss: () -> Unit,
-    onSave: (contact: String, itemRental: String, amount: Double, deposit: Double, notes: String) -> Unit
+    onSave: (contact: String, itemRental: String, amount: Double, deposit: Double, durationDays: Int, notes: String) -> Unit
 ) {
     var contactName by remember { mutableStateOf("") }
     var itemRental by remember { mutableStateOf("") }
     var amountText by remember { mutableStateOf("") }
     var depositText by remember { mutableStateOf("0") }
+    var durationDays by remember { mutableStateOf(7) }
     var notes by remember { mutableStateOf("") }
+    var validationError by remember { mutableStateOf<String?>(null) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -278,8 +308,11 @@ fun AddRentalDialog(
 
                 OutlinedTextField(
                     value = itemRental,
-                    onValueChange = { itemRental = it },
-                    label = { Text("Equipo / Mobiliario / Artículo rentado") },
+                    onValueChange = {
+                        itemRental = it
+                        validationError = null
+                    },
+                    label = { Text("Equipo / Mobiliario / Artículo rentado *") },
                     placeholder = { Text("Ej: Impresora 58mm, Sillas, Proyector...") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -288,8 +321,11 @@ fun AddRentalDialog(
 
                 OutlinedTextField(
                     value = contactName,
-                    onValueChange = { contactName = it },
-                    label = { Text("Nombre del Cliente / Arrendatario") },
+                    onValueChange = {
+                        contactName = it
+                        validationError = null
+                    },
+                    label = { Text("Nombre del Cliente / Arrendatario *") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -298,7 +334,10 @@ fun AddRentalDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = amountText,
-                        onValueChange = { amountText = it },
+                        onValueChange = {
+                            amountText = it
+                            validationError = null
+                        },
                         label = { Text("Tarifa Renta ($)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
@@ -306,12 +345,28 @@ fun AddRentalDialog(
                     )
                     OutlinedTextField(
                         value = depositText,
-                        onValueChange = { depositText = it },
+                        onValueChange = {
+                            depositText = it
+                            validationError = null
+                        },
                         label = { Text("Depósito ($)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text("Plazo de Devolución:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BrandNavy)
+                Spacer(modifier = Modifier.height(4.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(listOf(1, 3, 7, 15, 30)) { days ->
+                        FilterChip(
+                            selected = durationDays == days,
+                            onClick = { durationDays = days },
+                            label = { Text("$days ${if (days == 1) "día" else "días"}", fontSize = 11.sp) }
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(10.dp))
 
@@ -322,6 +377,11 @@ fun AddRentalDialog(
                     maxLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                validationError?.let { err ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(err, color = StatusCancelled, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -331,10 +391,22 @@ fun AddRentalDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            val amt = amountText.toDoubleOrNull() ?: 0.0
-                            val dep = depositText.toDoubleOrNull() ?: 0.0
-                            if (itemRental.isNotBlank() && contactName.isNotBlank()) {
-                                onSave(contactName, itemRental, amt, dep, notes)
+                            val amt = if (amountText.isBlank()) 0.0 else amountText.toDoubleOrNull()
+                            val dep = if (depositText.isBlank()) 0.0 else depositText.toDoubleOrNull()
+                            when {
+                                itemRental.isBlank() -> {
+                                    validationError = "Indica el equipo o artículo rentado."
+                                }
+                                contactName.isBlank() -> {
+                                    validationError = "El nombre del cliente es obligatorio."
+                                }
+                                amt == null || !amt.isFinite() || amt < 0.0 ||
+                                    dep == null || !dep.isFinite() || dep < 0.0 -> {
+                                    validationError = "Tarifa y depósito deben ser números válidos >= 0."
+                                }
+                                else -> {
+                                    onSave(contactName.trim(), itemRental.trim(), amt, dep, durationDays, notes.trim())
+                                }
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = BrandEmerald)

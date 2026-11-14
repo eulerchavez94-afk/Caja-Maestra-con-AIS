@@ -96,14 +96,18 @@ fun ReceiptConfigScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Logo", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = NavyDark)
-                            Row {
-                                IconButton(onClick = { Toast.makeText(context, "Logo predeterminado activo", Toast.LENGTH_SHORT).show() }, modifier = Modifier.size(28.dp)) {
-                                    Icon(Icons.Default.Close, contentDescription = "Quitar", tint = Color.Gray, modifier = Modifier.size(18.dp))
-                                }
-                                IconButton(onClick = { Toast.makeText(context, "Seleccionar imagen de galería", Toast.LENGTH_SHORT).show() }, modifier = Modifier.size(28.dp)) {
-                                    Icon(Icons.Default.Image, contentDescription = "Cargar", tint = NavyPrimary, modifier = Modifier.size(18.dp))
-                                }
+                            Text("Emblema de Ticket", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = NavyDark)
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = BrandEmeraldLight
+                            ) {
+                                Text(
+                                    text = "Estándar 58mm",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = BrandEmeraldDark,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
                             }
                         }
 
@@ -139,6 +143,7 @@ fun ReceiptConfigScreen(
                 ReceiptConfigItem(
                     label = "Contacto",
                     value = settings.address,
+                    canEdit = canEdit,
                     onEdit = {
                         editingFieldTitle = "Contacto / Dirección"
                         editingFieldValue = settings.address
@@ -151,6 +156,7 @@ fun ReceiptConfigScreen(
                 ReceiptConfigItem(
                     label = "Teléfono",
                     value = settings.phone,
+                    canEdit = canEdit,
                     onEdit = {
                         editingFieldTitle = "Teléfono"
                         editingFieldValue = settings.phone
@@ -163,6 +169,7 @@ fun ReceiptConfigScreen(
                 ReceiptConfigItem(
                     label = "Correo",
                     value = settings.email,
+                    canEdit = canEdit,
                     onEdit = {
                         editingFieldTitle = "Correo"
                         editingFieldValue = settings.email
@@ -175,6 +182,7 @@ fun ReceiptConfigScreen(
                 ReceiptConfigItem(
                     label = "Pie de Página",
                     value = settings.footerText,
+                    canEdit = canEdit,
                     onEdit = {
                         editingFieldTitle = "Pie de Página"
                         editingFieldValue = settings.footerText
@@ -187,6 +195,7 @@ fun ReceiptConfigScreen(
                 ReceiptConfigItem(
                     label = "QR Personalizado",
                     value = settings.customQr,
+                    canEdit = canEdit,
                     onEdit = {
                         editingFieldTitle = "QR Personalizado"
                         editingFieldValue = settings.customQr

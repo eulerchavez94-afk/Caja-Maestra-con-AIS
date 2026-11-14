@@ -58,7 +58,12 @@ data class UserPermissions(
     // Administrative Control Panels
     val canAccessAdminPanel: Boolean,
     val canAccessJefePanel: Boolean,
-    val canChangePasswords: Boolean
+    val canChangePasswords: Boolean,
+
+    // Cash Register & POS Controls
+    val canOpenCloseCashRegister: Boolean,
+    val canViewCashShiftExpectedBeforeClose: Boolean,
+    val canCancelSales: Boolean
 )
 
 /**
@@ -120,7 +125,10 @@ object RoleManager {
                 canEditReceiptHeaders = true,
                 canAccessAdminPanel = true,
                 canAccessJefePanel = true,
-                canChangePasswords = true
+                canChangePasswords = true,
+                canOpenCloseCashRegister = true,
+                canViewCashShiftExpectedBeforeClose = true,
+                canCancelSales = true
             )
         }
 
@@ -178,7 +186,10 @@ object RoleManager {
                 canEditReceiptHeaders = true,
                 canAccessAdminPanel = false,
                 canAccessJefePanel = true,
-                canChangePasswords = true
+                canChangePasswords = true,
+                canOpenCloseCashRegister = adminSales,
+                canViewCashShiftExpectedBeforeClose = adminSales,
+                canCancelSales = adminSales
             )
         }
 
@@ -232,7 +243,10 @@ object RoleManager {
             canEditReceiptHeaders = false,
             canAccessAdminPanel = false,
             canAccessJefePanel = false,
-            canChangePasswords = false
+            canChangePasswords = false,
+            canOpenCloseCashRegister = trabajadorSales,
+            canViewCashShiftExpectedBeforeClose = false,
+            canCancelSales = false
         )
     }
 
@@ -267,6 +281,127 @@ object RoleManager {
             AppScreen.CLIENTES,
             AppScreen.CONFIGURACION
         )
-        return preferred.firstOrNull { canAccessScreen(it, settings) } ?: AppScreen.VENTAS
+        return preferred.firstOrNull { canAccessScreen(it, settings) }
+            ?: AppScreen.entries.firstOrNull { canAccessScreen(it, settings) }
+            ?: AppScreen.VENTAS
+    }
+
+    /**
+     * Enforces hierarchy rules for creating, editing, or deleting employee accounts:
+     * Only ADMINISTRADOR can manage ADMINISTRADOR employees.
+     * DUENO can manage DUENO and TRABAJADOR employees.
+     * TRABAJADOR cannot manage any employees.
+     */
+    fun canManageEmployeeRole(actorRole: UserRole, targetRole: UserRole): Boolean {
+        return when (actorRole) {
+            UserRole.ADMINISTRADOR -> true
+            UserRole.DUENO -> targetRole != UserRole.ADMINISTRADOR
+            UserRole.TRABAJADOR -> false
+        }
+    }
+
+    /**
+     * Sanitizes proposed BusinessSettings updates in business logic so a lower-privileged role
+     * cannot escalate modules, trial lock, Jefe limits, PIN lock, or printer/receipt settings
+     * even if invoked directly without UI checks.
+     */
+    fun sanitizeSettingsUpdate(
+        current: BusinessSettings,
+        proposed: BusinessSettings
+    ): BusinessSettings {
+        val perms = getPermissions(current)
+
+        // Never allow updateSettings to swap active role or identity directly
+        var safe = proposed.copy(
+            currentRole = current.currentRole,
+            currentUserName = current.currentUserName
+        )
+
+        // Only ADMINISTRADOR may alter trial lock, app lock, or global module switches
+        if (!perms.canAccessAdminPanel) {
+            safe = safe.copy(
+                isAppLocked = current.isAppLocked,
+                trialModeEnabled = current.trialModeEnabled,
+                trialDurationDays = current.trialDurationDays,
+                trialStartDate = current.trialStartDate,
+                appLockReason = current.appLockReason,
+                moduleInventoryEnabled = current.moduleInventoryEnabled,
+                moduleSalesEnabled = current.moduleSalesEnabled,
+                modulePurchasesEnabled = current.modulePurchasesEnabled,
+                moduleCashflowEnabled = current.moduleCashflowEnabled,
+                moduleRentalsEnabled = current.moduleRentalsEnabled,
+                moduleReportsEnabled = current.moduleReportsEnabled,
+                moduleEmployeesEnabled = current.moduleEmployeesEnabled,
+                moduleClientsEnabled = current.moduleClientsEnabled,
+                moduleSuppliersEnabled = current.moduleSuppliersEnabled,
+                moduleThermalPrinterEnabled = current.moduleThermalPrinterEnabled,
+                moduleCloudBackupEnabled = current.moduleCloudBackupEnabled,
+                moduleSettingsEnabled = current.moduleSettingsEnabled
+            )
+        }
+
+        // Only DUENO or ADMINISTRADOR may alter Jefe worker policies or PIN restriction
+        if (!perms.canAccessJefePanel) {
+            safe = safe.copy(
+                restrictWithPin = current.restrictWithPin,
+                jefeAllowsTrabajadorInventory = current.jefeAllowsTrabajadorInventory,
+                jefeAllowsTrabajadorSales = current.jefeAllowsTrabajadorSales,
+                jefeAllowsTrabajadorPurchases = current.jefeAllowsTrabajadorPurchases,
+                jefeAllowsTrabajadorCashflow = current.jefeAllowsTrabajadorCashflow,
+                jefeAllowsTrabajadorRentals = current.jefeAllowsTrabajadorRentals,
+                jefeAllowsTrabajadorReports = current.jefeAllowsTrabajadorReports,
+                jefeAllowsTrabajadorEmployees = current.jefeAllowsTrabajadorEmployees,
+                jefeAllowsTrabajadorClients = current.jefeAllowsTrabajadorClients,
+                jefeAllowsTrabajadorSuppliers = current.jefeAllowsTrabajadorSuppliers,
+                jefeAllowsTrabajadorSettings = current.jefeAllowsTrabajadorSettings
+            )
+        }
+
+        // Only roles allowed to configure printer may alter Bluetooth printer properties
+        if (!perms.canConfigurePrinter) {
+            safe = safe.copy(
+                bluetoothPrinterName = current.bluetoothPrinterName,
+                bluetoothPrinterAddress = current.bluetoothPrinterAddress,
+                printScale = current.printScale,
+                printIntensity = current.printIntensity
+            )
+        }
+
+        // Only roles allowed to edit receipt headers may alter ticket/business header config
+        if (!perms.canEditReceiptHeaders) {
+            safe = safe.copy(
+                businessName = current.businessName,
+                phone = current.phone,
+                email = current.email,
+                address = current.address,
+                footerText = current.footerText,
+                customQr = current.customQr,
+                receiptFormat = current.receiptFormat,
+                receiptShowClientInfo = current.receiptShowClientInfo,
+                receiptShowQr = current.receiptShowQr,
+                receiptShowPaymentBreakdown = current.receiptShowPaymentBreakdown,
+                receiptShowFolio = current.receiptShowFolio,
+                receiptShowStatus = current.receiptShowStatus,
+                receiptShowKeyAndUnit = current.receiptShowKeyAndUnit
+            )
+        }
+
+        // Only roles with Settings access (or Admin/Jefe) may alter general/POS/scanner preferences
+        if (!perms.canAccessSettings && !perms.canAccessAdminPanel && !perms.canAccessJefePanel) {
+            safe = safe.copy(
+                currencySymbol = current.currencySymbol,
+                numberFormat = current.numberFormat,
+                checkStock = current.checkStock,
+                useAverageCost = current.useAverageCost,
+                allowMultipleSales = current.allowMultipleSales,
+                allowEditDate = current.allowEditDate,
+                showCustomerPayAndChange = current.showCustomerPayAndChange,
+                externalScanner = current.externalScanner,
+                continuousScan = current.continuousScan,
+                frontCamera = current.frontCamera
+            )
+        }
+
+        return safe
     }
 }

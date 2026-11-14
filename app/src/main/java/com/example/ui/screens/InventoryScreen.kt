@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -27,6 +29,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.InventoryItem
+import com.example.data.model.InventoryMovement
+import com.example.data.model.InventoryMovementType
 import com.example.data.model.ItemType
 import com.example.data.model.UserRole
 import com.example.ui.components.BarcodeScannerDialog
@@ -36,6 +40,9 @@ import com.example.ui.components.SkeletonListPlaceholder
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MainViewModel
 import com.example.util.RoleManager
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun InventoryScreen(
@@ -43,7 +50,9 @@ fun InventoryScreen(
     onOpenDrawer: () -> Unit,
     onShowTutorial: () -> Unit
 ) {
+    val context = LocalContext.current
     val items by viewModel.inventoryItems.collectAsState()
+    val movements by viewModel.inventoryMovements.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val permissions = remember(settings) { RoleManager.getPermissions(settings) }
     val searchQuery by viewModel.searchQuery.collectAsState()
@@ -54,6 +63,8 @@ fun InventoryScreen(
     var showBarcodeScanner by remember { mutableStateOf(false) }
     var showAddEditDialog by remember { mutableStateOf(false) }
     var itemToEdit by remember { mutableStateOf<InventoryItem?>(null) }
+    var itemToDelete by remember { mutableStateOf<InventoryItem?>(null) }
+    var itemForHistory by remember { mutableStateOf<InventoryItem?>(null) }
     var isSearchExpanded by remember { mutableStateOf(false) }
 
     // Filter items with debounce & derivedStateOf to prevent unnecessary re-renders on slow devices
@@ -219,9 +230,7 @@ fun InventoryScreen(
         ) {
             var isInitialLoading by remember { mutableStateOf(items.isEmpty()) }
             LaunchedEffect(items) {
-                if (items.isNotEmpty()) {
-                    isInitialLoading = false
-                }
+                isInitialLoading = false
             }
 
             if (isInitialLoading) {
@@ -233,22 +242,29 @@ fun InventoryScreen(
                         ItemType.MANUFACTURA -> Icons.Default.PrecisionManufacturing
                         ItemType.SERVICIO -> Icons.Default.HomeRepairService
                     },
-                    title = "¡Tu Inventario está Listo!",
+                    title = if (searchQuery.isNotBlank()) "Sin coincidencias" else "¡Tu Inventario está Listo!",
                     description = if (searchQuery.isNotBlank())
                         "No se encontraron resultados para '$searchQuery'."
                     else
                         "Aún no tienes ${selectedBottomTab.name.lowercase()}s registrados. Puedes agregar uno nuevo o escanear un código de barras.",
-                    actionButtonText = "+ Registrar Nuevo ${selectedBottomTab.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    actionButtonText = if (searchQuery.isNotBlank())
+                        "Limpiar Búsqueda"
+                    else
+                        "+ Registrar Nuevo ${selectedBottomTab.name.lowercase().replaceFirstChar { it.uppercase() }}",
                     onActionClick = {
-                        itemToEdit = null
-                        showAddEditDialog = true
+                        if (searchQuery.isNotBlank()) {
+                            viewModel.setSearchQuery("")
+                        } else {
+                            itemToEdit = null
+                            showAddEditDialog = true
+                        }
                     },
                     onTutorialClick = onShowTutorial
                 )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(14.dp),
+                    contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filteredItems, key = { it.id }) { item ->
@@ -261,7 +277,8 @@ fun InventoryScreen(
                                 itemToEdit = item
                                 showAddEditDialog = true
                             },
-                            onDelete = { viewModel.deleteInventoryItem(item) },
+                            onDelete = { itemToDelete = item },
+                            onViewHistory = { itemForHistory = item },
                             onStockAdjust = { delta -> viewModel.adjustItemStock(item, delta) }
                         )
                     }
@@ -298,6 +315,7 @@ fun InventoryScreen(
         AddEditItemDialog(
             initialItem = itemToEdit,
             defaultType = selectedBottomTab,
+            canViewCost = permissions.canViewCostPrice,
             onDismiss = { showAddEditDialog = false },
             onSave = { savedItem ->
                 viewModel.saveInventoryItem(savedItem)
@@ -305,6 +323,51 @@ fun InventoryScreen(
             },
             onScanBarcode = {
                 showBarcodeScanner = true
+            }
+        )
+    }
+
+    // Delete confirmation dialog
+    itemToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { itemToDelete = null },
+            title = { Text("Eliminar Artículo", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Deseas eliminar '${target.name}' (${target.code}) del inventario?", fontSize = 13.sp) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteInventoryItem(target)
+                        itemToDelete = null
+                        Toast.makeText(context, "Artículo eliminado", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = StatusCancelled)
+                ) {
+                    Text("Eliminar", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { itemToDelete = null }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    // Inventory Movement History & Reasoned Stock Adjustment Dialog
+    itemForHistory?.let { selected ->
+        val liveItem = items.firstOrNull { it.id == selected.id } ?: selected
+        val itemMovements = remember(movements, liveItem.id) {
+            movements.filter { it.itemId == liveItem.id }
+        }
+        InventoryHistoryAndAdjustDialog(
+            item = liveItem,
+            movements = itemMovements,
+            onDismiss = { itemForHistory = null },
+            onAdjustWithReason = { delta, reason ->
+                viewModel.adjustItemStock(liveItem, delta, reason)
+                Toast.makeText(
+                    context,
+                    "Existencia actualizada (${if (delta >= 0) "+" else ""}$delta ${liveItem.unit})",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         )
     }
@@ -371,6 +434,7 @@ private fun ModernInventoryItemCard(
     canViewCost: Boolean = true,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onViewHistory: () -> Unit,
     onStockAdjust: (Double) -> Unit
 ) {
     Surface(
@@ -462,12 +526,29 @@ private fun ModernInventoryItemCard(
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
+                            if (item.isRawMaterial) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = BrandAmberLight
+                                ) {
+                                    Text(
+                                        text = "Insumo",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BrandAmberDark,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
 
-                // Edit and Delete Buttons (Delete only for Jefe / Admin)
+                // History, Edit and Delete Buttons (Delete only for Jefe / Admin)
                 Row {
+                    IconButton(onClick = onViewHistory, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.History, contentDescription = "Historial de Stock", tint = BrandBlue, modifier = Modifier.size(18.dp))
+                    }
                     IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
                         Icon(Icons.Default.Edit, contentDescription = "Editar", tint = BrandNavy, modifier = Modifier.size(18.dp))
                     }
@@ -585,6 +666,7 @@ private fun ModernInventoryItemCard(
 fun AddEditItemDialog(
     initialItem: InventoryItem?,
     defaultType: ItemType,
+    canViewCost: Boolean = true,
     onDismiss: () -> Unit,
     onSave: (InventoryItem) -> Unit,
     onScanBarcode: () -> Unit
@@ -599,7 +681,9 @@ fun AddEditItemDialog(
     var unit by remember { mutableStateOf(initialItem?.unit ?: "Pza") }
     var type by remember { mutableStateOf(initialItem?.type ?: defaultType) }
     var isWaste by remember { mutableStateOf(initialItem?.isWaste ?: false) }
+    var isRawMaterial by remember { mutableStateOf(initialItem?.isRawMaterial ?: false) }
     var notes by remember { mutableStateOf(initialItem?.notes ?: "") }
+    var validationError by remember { mutableStateOf<String?>(null) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -659,7 +743,10 @@ fun AddEditItemDialog(
                 ) {
                     OutlinedTextField(
                         value = name,
-                        onValueChange = { name = it },
+                        onValueChange = {
+                            name = it
+                            validationError = null
+                        },
                         label = { Text("Nombre del artículo *", fontWeight = FontWeight.SemiBold) },
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true,
@@ -696,18 +783,26 @@ fun AddEditItemDialog(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedTextField(
-                            value = costPrice,
-                            onValueChange = { costPrice = it },
-                            label = { Text("Costo compra ($)") },
-                            shape = RoundedCornerShape(12.dp),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
+                        if (canViewCost) {
+                            OutlinedTextField(
+                                value = costPrice,
+                                onValueChange = {
+                                    costPrice = it
+                                    validationError = null
+                                },
+                                label = { Text("Costo compra ($)") },
+                                shape = RoundedCornerShape(12.dp),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                         OutlinedTextField(
                             value = salePrice,
-                            onValueChange = { salePrice = it },
+                            onValueChange = {
+                                salePrice = it
+                                validationError = null
+                            },
                             label = { Text("Precio venta ($) *") },
                             shape = RoundedCornerShape(12.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -723,7 +818,10 @@ fun AddEditItemDialog(
                         ) {
                             OutlinedTextField(
                                 value = stock,
-                                onValueChange = { stock = it },
+                                onValueChange = {
+                                    stock = it
+                                    validationError = null
+                                },
                                 label = { Text("Existencia") },
                                 shape = RoundedCornerShape(12.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -732,7 +830,10 @@ fun AddEditItemDialog(
                             )
                             OutlinedTextField(
                                 value = minStock,
-                                onValueChange = { minStock = it },
+                                onValueChange = {
+                                    minStock = it
+                                    validationError = null
+                                },
                                 label = { Text("Mínimo Alerta") },
                                 shape = RoundedCornerShape(12.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -764,17 +865,54 @@ fun AddEditItemDialog(
                         )
                     }
 
+                    if (type == ItemType.PRODUCTO && !isWaste) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(SurfaceSubtle)
+                                .clickable { isRawMaterial = !isRawMaterial }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = isRawMaterial, onCheckedChange = { isRawMaterial = it })
+                            Text("Marcar como Materia Prima / Insumo", fontSize = 13.sp, color = TextDark)
+                        }
+                    }
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
                             .background(SurfaceSubtle)
-                            .clickable { isWaste = !isWaste }
+                            .clickable {
+                                isWaste = !isWaste
+                                if (isWaste) isRawMaterial = false
+                            }
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Checkbox(checked = isWaste, onCheckedChange = { isWaste = it })
+                        Checkbox(
+                            checked = isWaste,
+                            onCheckedChange = {
+                                isWaste = it
+                                if (it) isRawMaterial = false
+                            }
+                        )
                         Text("Marcar como Merma / Desperdicio", fontSize = 13.sp, color = TextDark)
+                    }
+
+                    OutlinedTextField(
+                        value = notes,
+                        onValueChange = { notes = it },
+                        label = { Text("Notas / Ubicación (opcional)") },
+                        shape = RoundedCornerShape(12.dp),
+                        maxLines = 2,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    validationError?.let { err ->
+                        Text(err, color = StatusCancelled, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
@@ -790,22 +928,51 @@ fun AddEditItemDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (name.isNotBlank()) {
-                                onSave(
-                                    (initialItem ?: InventoryItem(name = name, code = code, costPrice = 0.0, salePrice = 0.0, stock = 0.0)).copy(
-                                        name = name.trim(),
-                                        code = code.trim().ifEmpty { "ART-${System.currentTimeMillis() % 10000}" },
-                                        costPrice = costPrice.toDoubleOrNull() ?: 0.0,
-                                        salePrice = salePrice.toDoubleOrNull() ?: 0.0,
-                                        stock = stock.toDoubleOrNull() ?: 0.0,
-                                        minStock = minStock.toDoubleOrNull() ?: 5.0,
-                                        category = category.trim().ifEmpty { "General" },
-                                        unit = unit.trim().ifEmpty { "Pza" },
-                                        type = type,
-                                        isWaste = isWaste,
-                                        notes = notes.trim()
+                            val parsedCost = if (!canViewCost) {
+                                initialItem?.costPrice ?: 0.0
+                            } else if (costPrice.isBlank()) {
+                                0.0
+                            } else {
+                                costPrice.toDoubleOrNull()
+                            }
+                            val parsedSale = if (salePrice.isBlank()) 0.0 else salePrice.toDoubleOrNull()
+                            val parsedStock = if (type == ItemType.SERVICIO || stock.isBlank()) 0.0 else stock.toDoubleOrNull()
+                            val parsedMin = if (type == ItemType.SERVICIO || minStock.isBlank()) 0.0 else minStock.toDoubleOrNull()
+
+                            when {
+                                name.isBlank() -> {
+                                    validationError = "El nombre del artículo es obligatorio."
+                                }
+                                parsedCost == null || parsedCost < 0.0 ||
+                                    parsedSale == null || parsedSale < 0.0 ||
+                                    parsedStock == null || parsedStock < 0.0 ||
+                                    parsedMin == null || parsedMin < 0.0 -> {
+                                    validationError = "Costo, precio, existencia y mínimo deben ser números válidos >= 0."
+                                }
+                                else -> {
+                                    onSave(
+                                        (initialItem ?: InventoryItem(
+                                            name = name,
+                                            code = code,
+                                            costPrice = 0.0,
+                                            salePrice = 0.0,
+                                            stock = 0.0
+                                        )).copy(
+                                            name = name.trim(),
+                                            code = code.trim().ifEmpty { "ART-${System.currentTimeMillis() % 10000}" },
+                                            costPrice = parsedCost,
+                                            salePrice = parsedSale,
+                                            stock = parsedStock,
+                                            minStock = parsedMin,
+                                            category = category.trim().ifEmpty { "General" },
+                                            unit = unit.trim().ifEmpty { "Pza" },
+                                            type = type,
+                                            isWaste = isWaste,
+                                            isRawMaterial = type == ItemType.PRODUCTO && !isWaste && isRawMaterial,
+                                            notes = notes.trim()
+                                        )
                                     )
-                                )
+                                }
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = BrandEmerald),
@@ -813,6 +980,194 @@ fun AddEditItemDialog(
                         modifier = Modifier.testTag("save_inventory_item_button")
                     ) {
                         Text("Guardar Artículo", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InventoryHistoryAndAdjustDialog(
+    item: InventoryItem,
+    movements: List<InventoryMovement>,
+    onDismiss: () -> Unit,
+    onAdjustWithReason: (delta: Double, reason: String) -> Unit
+) {
+    var deltaInput by remember { mutableStateOf("") }
+    var isIncoming by remember { mutableStateOf(true) }
+    var reasonInput by remember { mutableStateOf("") }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = SurfaceWhite,
+            shadowElevation = 8.dp,
+            modifier = Modifier
+                .widthIn(max = 480.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 20.dp)
+                .imePadding()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Kardex / Movimientos", fontFamily = DisplayFontFamily, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextDark)
+                        Text("${item.name} • Stock actual: ${item.stock} ${item.unit}", fontSize = 12.sp, color = TextMuted)
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = TextMedium)
+                    }
+                }
+
+                if (item.type != ItemType.SERVICIO) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = CanvasLight,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, SurfaceHover),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Ajuste Rápido con Motivo", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BrandNavy)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = isIncoming,
+                                    onClick = { isIncoming = true },
+                                    label = { Text("+ Entrada", fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = BrandEmerald, selectedLabelColor = Color.White),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                FilterChip(
+                                    selected = !isIncoming,
+                                    onClick = { isIncoming = false },
+                                    label = { Text("- Salida / Merma", fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = StatusCancelled, selectedLabelColor = Color.White),
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = deltaInput,
+                                    onValueChange = {
+                                        deltaInput = it
+                                        errorMsg = null
+                                    },
+                                    label = { Text("Cantidad (${item.unit})") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = reasonInput,
+                                    onValueChange = {
+                                        reasonInput = it
+                                        errorMsg = null
+                                    },
+                                    label = { Text("Motivo") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1.3f)
+                                )
+                            }
+                            errorMsg?.let { err ->
+                                Text(err, color = StatusCancelled, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Button(
+                                onClick = {
+                                    val qty = deltaInput.toDoubleOrNull()
+                                    if (qty == null || !qty.isFinite() || qty <= 0.0) {
+                                        errorMsg = "Ingresa una cantidad mayor a cero."
+                                    } else {
+                                        val signed = if (isIncoming) qty else -qty
+                                        val finalReason = reasonInput.trim().ifBlank {
+                                            if (isIncoming) "Ajuste entrada manual" else "Ajuste salida manual"
+                                        }
+                                        onAdjustWithReason(signed, finalReason)
+                                        deltaInput = ""
+                                        reasonInput = ""
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = BrandNavy),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Aplicar Ajuste al Stock", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Historial Reciente (${movements.size})", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = TextDark)
+                Spacer(modifier = Modifier.height(6.dp))
+
+                if (movements.isEmpty()) {
+                    Text(
+                        "Aún no hay movimientos registrados para este artículo.",
+                        fontSize = 12.sp,
+                        color = TextMuted,
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 260.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(movements, key = { it.id }) { mov ->
+                            val dateStr = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(mov.date))
+                            val sign = if (mov.quantityDelta >= 0) "+" else ""
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = CanvasLight,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, SurfaceHover),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "${mov.movementType.name.replace('_', ' ')} (${mov.referenceFolio})",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = BrandNavy
+                                        )
+                                        if (mov.reason.isNotBlank()) {
+                                            Text(mov.reason, fontSize = 11.sp, color = TextDark)
+                                        }
+                                        Text(
+                                            "$dateStr • ${mov.previousStock} -> ${mov.newStock} ${item.unit} • ${mov.performedBy}",
+                                            fontSize = 10.sp,
+                                            color = TextMuted
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "$sign${String.format(Locale.US, "%.2f", mov.quantityDelta)}",
+                                        fontFamily = DisplayFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = if (mov.quantityDelta >= 0) BrandEmeraldDark else StatusCancelled
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

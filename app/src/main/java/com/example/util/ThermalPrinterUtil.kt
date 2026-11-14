@@ -250,5 +250,113 @@ object ThermalPrinterUtil {
         val left = "  $qty x $unitPrice"
         return justifyText(left, total, width)
     }
+
+    /**
+     * Formats a 58mm thermal receipt (32 columns) for Cash Register Closing (Corte de Caja).
+     */
+    fun formatCashShiftReportText(
+        settings: BusinessSettings,
+        shift: com.example.data.model.CashRegisterShift
+    ): String {
+        val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+        val openedStr = sdf.format(Date(shift.openedAt))
+        val closedStr = shift.closedAt?.let { sdf.format(Date(it)) } ?: "TURNO ABIERTO"
+        val cur = settings.currencySymbol
+        val sb = StringBuilder()
+
+        val divider = "-".repeat(COLUMNS_58MM)
+        val doubleDivider = "=".repeat(COLUMNS_58MM)
+
+        sb.append(centerText(settings.businessName, COLUMNS_58MM)).append("\n")
+        sb.append(centerText("*** CORTE DE CAJA ***", COLUMNS_58MM)).append("\n")
+        sb.append(doubleDivider).append("\n")
+        sb.append(justifyText("TURNO #:", "${shift.id}", COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("CAJERO:", shift.cashierName, COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("APERTURA:", openedStr, COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("CIERRE:", closedStr, COLUMNS_58MM)).append("\n")
+        sb.append(divider).append("\n")
+
+        sb.append(justifyText("FONDO INICIAL:", "$cur${String.format(Locale.US, "%.2f", shift.openingFloat)}", COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("VENTAS (${shift.salesCount}):", "", COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("  Efectivo:", "$cur${String.format(Locale.US, "%.2f", shift.cashSalesTotal)}", COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("  Tarjeta:", "$cur${String.format(Locale.US, "%.2f", shift.cardSalesTotal)}", COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("  Transf.:", "$cur${String.format(Locale.US, "%.2f", shift.transferSalesTotal)}", COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("  Credito:", "$cur${String.format(Locale.US, "%.2f", shift.creditSalesTotal)}", COLUMNS_58MM)).append("\n")
+
+        val totalVentas = shift.cashSalesTotal + shift.cardSalesTotal + shift.transferSalesTotal + shift.creditSalesTotal
+        sb.append(justifyText("TOTAL VENDIDO:", "$cur${String.format(Locale.US, "%.2f", totalVentas)}", COLUMNS_58MM)).append("\n")
+        sb.append(divider).append("\n")
+
+        sb.append(justifyText("+ ENTRADAS CAJA:", "$cur${String.format(Locale.US, "%.2f", shift.cashEntriesTotal)}", COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("- RETIROS/SANG.:", "$cur${String.format(Locale.US, "%.2f", shift.cashWithdrawalsTotal)}", COLUMNS_58MM)).append("\n")
+        sb.append(divider).append("\n")
+
+        sb.append(justifyText("EFECT. ESPERADO:", "$cur${String.format(Locale.US, "%.2f", shift.expectedCash)}", COLUMNS_58MM)).append("\n")
+        sb.append(justifyText("EFECT. CONTADO:", "$cur${String.format(Locale.US, "%.2f", shift.countedCash)}", COLUMNS_58MM)).append("\n")
+
+        val diffLabel = when {
+            kotlin.math.abs(shift.difference) < 0.01 -> "CUADRE:"
+            shift.difference > 0 -> "SOBRANTE:"
+            else -> "FALTANTE:"
+        }
+        val diffVal = if (kotlin.math.abs(shift.difference) < 0.01) {
+            "EXACTO ($cur" + "0.00)"
+        } else {
+            "$cur${String.format(Locale.US, "%.2f", kotlin.math.abs(shift.difference))}"
+        }
+        sb.append(justifyText(diffLabel, diffVal, COLUMNS_58MM)).append("\n")
+
+        if (shift.nextTurnFloat > 0) {
+            sb.append(justifyText("FONDO SIG. TURNO:", "$cur${String.format(Locale.US, "%.2f", shift.nextTurnFloat)}", COLUMNS_58MM)).append("\n")
+            val finalRetiro = (shift.countedCash - shift.nextTurnFloat).coerceAtLeast(0.0)
+            sb.append(justifyText("RETIRO EN SOBRE:", "$cur${String.format(Locale.US, "%.2f", finalRetiro)}", COLUMNS_58MM)).append("\n")
+        }
+
+        if (shift.closingNotes.isNotBlank()) {
+            sb.append(divider).append("\n")
+            sb.append("NOTAS: ${shift.closingNotes.take(64)}\n")
+        }
+
+        sb.append(doubleDivider).append("\n")
+        sb.append(centerText("FIRMA CAJERO: ____________", COLUMNS_58MM)).append("\n\n")
+        sb.append(centerText("CAJA MAESTRA - CORTE 58MM", COLUMNS_58MM)).append("\n\n\n")
+        return sb.toString()
+    }
+
+    fun printCashShiftReport58mm(
+        context: android.content.Context,
+        settings: BusinessSettings,
+        shift: com.example.data.model.CashRegisterShift
+    ) {
+        val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as? android.print.PrintManager ?: return
+        val webView = android.webkit.WebView(context)
+        val reportText = formatCashShiftReportText(settings, shift)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        val html = """
+            <!DOCTYPE html>
+            <html><head><meta charset="utf-8"><style>
+            @page { margin: 0; size: 58mm auto; }
+            body { width: 48mm; margin: 0 auto; padding: 4mm 1mm; font-family: 'Courier New', monospace; font-size: 11px; white-space: pre-wrap; color: #000; }
+            </style></head><body>$reportText</body></html>
+        """.trimIndent()
+
+        webView.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                val adapter = webView.createPrintDocumentAdapter("Corte_Turno_${shift.id}")
+                val mediaSize = android.print.PrintAttributes.MediaSize("ROLL_58MM", "Rollo Térmico 58mm", 2280, 7874)
+                printManager.print(
+                    "Corte_Turno_${shift.id}",
+                    adapter,
+                    android.print.PrintAttributes.Builder()
+                        .setMediaSize(mediaSize)
+                        .setMinMargins(android.print.PrintAttributes.Margins.NO_MARGINS)
+                        .build()
+                )
+            }
+        }
+        webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+    }
 }
 

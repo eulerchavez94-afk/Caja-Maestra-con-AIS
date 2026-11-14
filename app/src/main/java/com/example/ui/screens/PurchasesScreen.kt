@@ -26,15 +26,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.InventoryItem
+import com.example.data.model.ItemType
 import com.example.data.model.Purchase
 import com.example.data.model.Supplier
 import com.example.data.model.UserRole
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MainViewModel
+import com.example.ui.viewmodel.PurchaseRegistrationResult
 import com.example.util.RoleManager
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +51,8 @@ fun PurchasesScreen(
     val suppliers by viewModel.suppliers.collectAsState()
     val inventoryItems by viewModel.inventoryItems.collectAsState()
     val settings by viewModel.settings.collectAsState()
+    val isProcessingPurchase by viewModel.isProcessingPurchase.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
 
     val permissions = remember(settings) { RoleManager.getPermissions(settings) }
     var showNewPurchaseDialog by remember { mutableStateOf(false) }
@@ -178,24 +184,43 @@ fun PurchasesScreen(
     }
 
     if (showNewPurchaseDialog) {
+        val purchasableItems = remember(inventoryItems) {
+            inventoryItems.filter { !it.isWaste && it.type != ItemType.SERVICIO }
+        }
+        val purchaseOpId = remember { UUID.randomUUID().toString() }
         NewPurchaseDialog(
             suppliers = suppliers,
-            inventoryItems = inventoryItems,
-            onDismiss = { showNewPurchaseDialog = false },
-            onSave = { selectedSupplier, itemsBought, total, isCredit, notes ->
-                val count = purchases.size + 1
-                val folio = "OC-${String.format(Locale.US, "%05d", count)}"
-                val newPurchase = Purchase(
-                    folio = folio,
-                    supplierId = selectedSupplier?.id,
-                    supplierName = selectedSupplier?.name ?: "Proveedor General",
-                    total = total,
-                    isCredit = isCredit,
-                    notes = notes
-                )
-                viewModel.registerPurchase(newPurchase, itemsBought)
-                showNewPurchaseDialog = false
-                Toast.makeText(context, "Compra registrada y existencias actualizadas", Toast.LENGTH_SHORT).show()
+            inventoryItems = purchasableItems,
+            currencySymbol = settings.currencySymbol,
+            isProcessing = isProcessingPurchase,
+            onDismiss = { if (!isProcessingPurchase) showNewPurchaseDialog = false },
+            onSave = { selectedSupplier, itemsBought, isCredit, notes ->
+                coroutineScope.launch {
+                    when (val res = viewModel.registerPurchaseAsync(
+                        supplierId = selectedSupplier?.id,
+                        fallbackSupplierName = selectedSupplier?.name ?: "Proveedor General",
+                        itemsBought = itemsBought,
+                        isCredit = isCredit,
+                        notes = notes,
+                        operationId = purchaseOpId
+                    )) {
+                        is PurchaseRegistrationResult.Success -> {
+                            showNewPurchaseDialog = false
+                            Toast.makeText(
+                                context,
+                                "Compra ${res.purchase.folio} registrada y existencias actualizadas",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        PurchaseRegistrationResult.AlreadyProcessing -> Unit
+                        PurchaseRegistrationResult.Unauthorized -> {
+                            Toast.makeText(context, "Sin permisos para registrar compras.", Toast.LENGTH_SHORT).show()
+                        }
+                        is PurchaseRegistrationResult.Error -> {
+                            Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
             }
         )
     }
@@ -205,13 +230,17 @@ fun PurchasesScreen(
 fun NewPurchaseDialog(
     suppliers: List<Supplier>,
     inventoryItems: List<InventoryItem>,
+    currencySymbol: String = "$",
+    isProcessing: Boolean = false,
     onDismiss: () -> Unit,
-    onSave: (Supplier?, List<Triple<InventoryItem, Double, Double>>, Double, Boolean, String) -> Unit
+    onSave: (Supplier?, List<Triple<InventoryItem, Double, Double>>, Boolean, String) -> Unit
 ) {
     var selectedSupplier by remember { mutableStateOf<Supplier?>(suppliers.firstOrNull()) }
-    var selectedItem by remember { mutableStateOf<InventoryItem?>(inventoryItems.firstOrNull()) }
+    var selectedItem by remember(inventoryItems) { mutableStateOf<InventoryItem?>(inventoryItems.firstOrNull()) }
     var quantityText by remember { mutableStateOf("10") }
-    var costPriceText by remember { mutableStateOf(selectedItem?.costPrice?.toString() ?: "0") }
+    var costPriceText by remember(selectedItem) { mutableStateOf(selectedItem?.costPrice?.toString() ?: "0") }
+    var orderLines by remember { mutableStateOf<List<Triple<InventoryItem, Double, Double>>>(emptyList()) }
+    var lineError by remember { mutableStateOf<String?>(null) }
     var isCredit by remember { mutableStateOf(false) }
     var notes by remember { mutableStateOf("") }
     var expandedSupplierDropdown by remember { mutableStateOf(false) }
@@ -226,7 +255,7 @@ fun NewPurchaseDialog(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 480.dp)
+                .widthIn(max = 500.dp)
                 .padding(horizontal = 16.dp, vertical = 20.dp)
                 .imePadding()
         ) {
@@ -242,7 +271,7 @@ fun NewPurchaseDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Nueva Orden de Compra", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = NavyDark)
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = onDismiss, enabled = !isProcessing) {
                         Icon(Icons.Default.Close, contentDescription = "Cerrar")
                     }
                 }
@@ -257,7 +286,7 @@ fun NewPurchaseDialog(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text(selectedSupplier?.name ?: "Seleccione proveedor", modifier = Modifier.weight(1f))
+                        Text(selectedSupplier?.name ?: "Proveedor General", modifier = Modifier.weight(1f))
                         Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                     }
                     DropdownMenu(
@@ -278,15 +307,19 @@ fun NewPurchaseDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Select Product to replenish
-                Text("Artículo a ingresar:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                // Select Product to replenish (Servicios & Mermas excluded)
+                Text("Artículo a ingresar (sin servicios ni mermas):", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 Box {
                     OutlinedButton(
                         onClick = { expandedItemDropdown = true },
+                        enabled = inventoryItems.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text(selectedItem?.name ?: "Seleccione artículo", modifier = Modifier.weight(1f))
+                        Text(
+                            selectedItem?.name ?: "No hay artículos comprables en inventario",
+                            modifier = Modifier.weight(1f)
+                        )
                         Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                     }
                     DropdownMenu(
@@ -299,6 +332,7 @@ fun NewPurchaseDialog(
                                 onClick = {
                                     selectedItem = item
                                     costPriceText = item.costPrice.toString()
+                                    lineError = null
                                     expandedItemDropdown = false
                                 }
                             )
@@ -314,7 +348,10 @@ fun NewPurchaseDialog(
                 ) {
                     OutlinedTextField(
                         value = quantityText,
-                        onValueChange = { quantityText = it },
+                        onValueChange = {
+                            quantityText = it
+                            lineError = null
+                        },
                         label = { Text("Cantidad") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
@@ -322,8 +359,11 @@ fun NewPurchaseDialog(
                     )
                     OutlinedTextField(
                         value = costPriceText,
-                        onValueChange = { costPriceText = it },
-                        label = { Text("Costo Unit. ($)") },
+                        onValueChange = {
+                            costPriceText = it
+                            lineError = null
+                        },
+                        label = { Text("Costo Unit. ($currencySymbol)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         modifier = Modifier.weight(1f)
@@ -332,11 +372,98 @@ fun NewPurchaseDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                val qty = quantityText.toDoubleOrNull() ?: 0.0
-                val cost = costPriceText.toDoubleOrNull() ?: 0.0
-                val total = qty * cost
+                val currentQty = quantityText.toDoubleOrNull() ?: 0.0
+                val currentCost = costPriceText.toDoubleOrNull() ?: 0.0
 
-                Text("Total Compra: $${String.format(Locale.US, "%.2f", total)}", fontWeight = FontWeight.Bold, color = TileGreen)
+                OutlinedButton(
+                    onClick = {
+                        val item = selectedItem
+                        if (item == null) {
+                            lineError = "Selecciona un producto válido."
+                        } else if (currentQty <= 0.0 || currentCost < 0.0) {
+                            lineError = "Cantidad > 0 y costo >= 0 requeridos."
+                        } else {
+                            orderLines = orderLines + Triple(item, currentQty, currentCost)
+                            quantityText = "1"
+                            lineError = null
+                        }
+                    },
+                    enabled = selectedItem != null && !isProcessing,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("add_purchase_line_btn")
+                ) {
+                    Icon(Icons.Default.AddShoppingCart, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Agregar artículo a la orden (${orderLines.size})", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                if (orderLines.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = SurfaceSubtle,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("Productos en esta orden:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NavyDark)
+                            orderLines.forEachIndexed { idx, (lineItem, lQty, lCost) ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${lQty}x ${lineItem.name} (@ $currencySymbol${String.format(Locale.US, "%.2f", lCost)})",
+                                        fontSize = 12.sp,
+                                        color = TextDark,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        text = "$currencySymbol${String.format(Locale.US, "%.2f", lQty * lCost)}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TileGreen
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            orderLines = orderLines.toMutableList().apply { removeAt(idx) }
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Quitar línea", tint = TileSalmon, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                lineError?.let { err ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(err, color = TileSalmon, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val effectiveLines = if (orderLines.isNotEmpty()) {
+                    orderLines
+                } else if (selectedItem != null && currentQty > 0.0 && currentCost >= 0.0) {
+                    listOf(Triple(selectedItem!!, currentQty, currentCost))
+                } else {
+                    emptyList()
+                }
+                val total = effectiveLines.sumOf { (_, q, c) -> q * c }
+
+                Text(
+                    "Total Compra: $currencySymbol${String.format(Locale.US, "%.2f", total)}",
+                    fontWeight = FontWeight.Bold,
+                    color = TileGreen
+                )
 
                 Spacer(modifier = Modifier.height(6.dp))
 
@@ -359,23 +486,30 @@ fun NewPurchaseDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancelar") }
+                    TextButton(onClick = onDismiss, enabled = !isProcessing) { Text("Cancelar") }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (selectedItem != null && qty > 0) {
+                            if (effectiveLines.isEmpty()) {
+                                lineError = "Agrega al menos un producto válido con cantidad mayor a cero."
+                            } else {
                                 onSave(
                                     selectedSupplier,
-                                    listOf(Triple(selectedItem!!, qty, cost)),
-                                    total,
+                                    effectiveLines,
                                     isCredit,
                                     notes
                                 )
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = GoldAccent)
+                        enabled = !isProcessing && effectiveLines.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(containerColor = GoldAccent),
+                        modifier = Modifier.testTag("submit_purchase_btn")
                     ) {
-                        Text("Registrar e Incrementar Stock", color = Color.Black, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (isProcessing) "Registrando..." else "Registrar e Incrementar Stock",
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

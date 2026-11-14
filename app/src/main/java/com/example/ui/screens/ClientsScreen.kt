@@ -51,6 +51,7 @@ fun ClientsScreen(
     var isSearchExpanded by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     var clientToEdit by remember { mutableStateOf<Client?>(null) }
+    var clientToDelete by remember { mutableStateOf<Client?>(null) }
 
     val filteredClients = clients.filter {
         searchQuery.isBlank() ||
@@ -109,15 +110,23 @@ fun ClientsScreen(
             if (filteredClients.isEmpty()) {
                 CajaMaestraEmptyState(
                     icon = Icons.Default.Group,
-                    title = "Sin Clientes Registrados",
+                    title = if (searchQuery.isNotBlank()) "Sin coincidencias" else "Sin Clientes Registrados",
                     description = if (searchQuery.isNotBlank())
                         "No se encontraron resultados para '$searchQuery'."
                     else
                         "Registra a tus clientes frecuentes para llevar su historial de compras, créditos pendientes y facturación.",
-                    actionButtonText = "+ Registrar Nuevo Cliente",
+                    actionButtonText = when {
+                        searchQuery.isNotBlank() -> "Limpiar Búsqueda"
+                        permissions.canCreateClient -> "+ Registrar Nuevo Cliente"
+                        else -> ""
+                    },
                     onActionClick = {
-                        clientToEdit = null
-                        showAddDialog = true
+                        if (searchQuery.isNotBlank()) {
+                            searchQuery = ""
+                        } else if (permissions.canCreateClient) {
+                            clientToEdit = null
+                            showAddDialog = true
+                        }
                     }
                 )
             } else {
@@ -252,21 +261,20 @@ fun ClientsScreen(
                                             Icon(Icons.Default.Phone, contentDescription = "Llamar", tint = BrandEmerald)
                                         }
                                     }
-                                    IconButton(
-                                        onClick = {
-                                            clientToEdit = client
-                                            showAddDialog = true
-                                        },
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Icon(Icons.Default.Edit, contentDescription = "Editar", tint = BrandNavy)
+                                    if (permissions.canCreateClient) {
+                                        IconButton(
+                                            onClick = {
+                                                clientToEdit = client
+                                                showAddDialog = true
+                                            },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(Icons.Default.Edit, contentDescription = "Editar", tint = BrandNavy)
+                                        }
                                     }
                                     if (permissions.canDeleteClient) {
                                         IconButton(
-                                            onClick = {
-                                                viewModel.deleteClient(client)
-                                                Toast.makeText(context, "Cliente eliminado", Toast.LENGTH_SHORT).show()
-                                            },
+                                            onClick = { clientToDelete = client },
                                             modifier = Modifier.size(36.dp)
                                         ) {
                                             Icon(Icons.Default.DeleteOutline, contentDescription = "Eliminar", tint = StatusCancelled)
@@ -291,6 +299,29 @@ fun ClientsScreen(
             }
         )
     }
+
+    clientToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { clientToDelete = null },
+            title = { Text("Eliminar Cliente", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Deseas eliminar a '${target.name}' del directorio de clientes?", fontSize = 13.sp) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteClient(target)
+                        clientToDelete = null
+                        Toast.makeText(context, "Cliente eliminado", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = StatusCancelled)
+                ) {
+                    Text("Eliminar", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { clientToDelete = null }) { Text("Cancelar") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -306,6 +337,7 @@ fun AddEditClientDialog(
     var address by remember { mutableStateOf(initialClient?.address ?: "") }
     var creditBalance by remember { mutableStateOf(initialClient?.creditBalance?.toString() ?: "0.0") }
     var notes by remember { mutableStateOf(initialClient?.notes ?: "") }
+    var validationError by remember { mutableStateOf<String?>(null) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -361,7 +393,10 @@ fun AddEditClientDialog(
                 ) {
                     OutlinedTextField(
                         value = name,
-                        onValueChange = { name = it },
+                        onValueChange = {
+                            name = it
+                            validationError = null
+                        },
                         label = { Text("Nombre completo *") },
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true,
@@ -391,7 +426,10 @@ fun AddEditClientDialog(
                         )
                         OutlinedTextField(
                             value = creditBalance,
-                            onValueChange = { creditBalance = it },
+                            onValueChange = {
+                                creditBalance = it
+                                validationError = null
+                            },
                             label = { Text("Saldo Crédito ($)") },
                             shape = RoundedCornerShape(12.dp),
                             singleLine = true,
@@ -424,6 +462,10 @@ fun AddEditClientDialog(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    validationError?.let { err ->
+                        Text(err, color = StatusCancelled, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -438,18 +480,27 @@ fun AddEditClientDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (name.isNotBlank()) {
-                                onSave(
-                                    (initialClient ?: Client(name = name)).copy(
-                                        name = name.trim(),
-                                        company = company.trim(),
-                                        phone = phone.trim(),
-                                        email = email.trim(),
-                                        address = address.trim(),
-                                        creditBalance = creditBalance.toDoubleOrNull() ?: 0.0,
-                                        notes = notes.trim()
+                            val parsedCredit = if (creditBalance.isBlank()) 0.0 else creditBalance.toDoubleOrNull()
+                            when {
+                                name.isBlank() -> {
+                                    validationError = "El nombre del cliente es obligatorio."
+                                }
+                                parsedCredit == null || !parsedCredit.isFinite() || parsedCredit < 0.0 -> {
+                                    validationError = "El saldo de crédito debe ser un número válido >= 0."
+                                }
+                                else -> {
+                                    onSave(
+                                        (initialClient ?: Client(name = name)).copy(
+                                            name = name.trim(),
+                                            company = company.trim(),
+                                            phone = phone.trim(),
+                                            email = email.trim(),
+                                            address = address.trim(),
+                                            creditBalance = parsedCredit,
+                                            notes = notes.trim()
+                                        )
                                     )
-                                )
+                                }
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = BrandEmerald),

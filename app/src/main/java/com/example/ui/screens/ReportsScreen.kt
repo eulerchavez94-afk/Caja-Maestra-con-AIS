@@ -1,41 +1,47 @@
 package com.example.ui.screens
 
-import android.widget.Toast
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.Label
+import androidx.compose.material.icons.automirrored.filled.LabelImportant
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.example.ui.components.CajaMaestraTopBar
+import com.example.ui.components.ReportDetailDialog
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.DateFilterType
 import com.example.ui.viewmodel.MainViewModel
-import com.example.util.ReportExporter
+import com.example.util.CostCoverage
+import com.example.util.FinancialSummary
+import com.example.util.ReportsDataset
+import com.example.util.ReportsEngine
 import com.example.util.RoleManager
-import java.util.Locale
 
 data class ReportTileItem(
     val title: String,
@@ -50,31 +56,63 @@ fun ReportsScreen(
     onOpenDrawer: () -> Unit,
     onShowTutorial: () -> Unit
 ) {
-    val context = LocalContext.current
     val sales by viewModel.sales.collectAsState()
     val purchases by viewModel.purchases.collectAsState()
     val inventory by viewModel.inventoryItems.collectAsState()
     val movements by viewModel.extraMovements.collectAsState()
+    val rentalsLoans by viewModel.rentalsLoans.collectAsState()
     val clients by viewModel.clients.collectAsState()
     val suppliers by viewModel.suppliers.collectAsState()
+    val employees by viewModel.employees.collectAsState()
+    val cashShifts by viewModel.cashShifts.collectAsState()
+    val cashShiftMovements by viewModel.allShiftMovements.collectAsState()
+    val inventoryMovements by viewModel.inventoryMovements.collectAsState()
     val settings by viewModel.settings.collectAsState()
 
     val selectedReportTitle by viewModel.selectedReportTitle.collectAsState()
     val dateFilter by viewModel.reportDateFilter.collectAsState()
 
-    val totalSales = sales.sumOf { it.total }
-    val totalPurchases = purchases.sumOf { it.total }
-    val estimatedProfit = (totalSales - totalPurchases).coerceAtLeast(0.0)
+    val dataset = remember(
+        sales,
+        purchases,
+        inventory,
+        movements,
+        rentalsLoans,
+        clients,
+        suppliers,
+        employees,
+        cashShifts,
+        cashShiftMovements,
+        inventoryMovements
+    ) {
+        ReportsDataset(
+            sales = sales,
+            purchases = purchases,
+            inventory = inventory,
+            extraMovements = movements,
+            rentalsLoans = rentalsLoans,
+            clients = clients,
+            suppliers = suppliers,
+            employees = employees,
+            cashShifts = cashShifts,
+            cashShiftMovements = cashShiftMovements,
+            inventoryMovements = inventoryMovements
+        )
+    }
 
-    // 25+ Report Tiles with rich, modern visual palettes
+    val financialSummary = remember(dataset, dateFilter) {
+        ReportsEngine.computeFinancialSummary(dataset = dataset, dateFilter = dateFilter)
+    }
+
+    // All 41 Report Tiles preserved with exact names, icons, and palettes
     val reportTiles = remember {
         listOf(
             ReportTileItem("Transacciones Por Día", TileGreen, Icons.Default.CalendarToday),
             ReportTileItem("Resumen Transacciones", TileGreen, Icons.Default.Receipt),
             ReportTileItem("Ventas Crédito", TileYellow, Icons.Default.CreditScore),
             ReportTileItem("Compras Crédito", TileYellow, Icons.Default.ShoppingBag),
-            ReportTileItem("Ingreso Extra Crédito", TileYellow, Icons.Default.TrendingUp),
-            ReportTileItem("Gasto Extra Crédito", TileYellow, Icons.Default.TrendingDown),
+            ReportTileItem("Ingreso Extra Crédito", TileYellow, Icons.AutoMirrored.Filled.TrendingUp),
+            ReportTileItem("Gasto Extra Crédito", TileYellow, Icons.AutoMirrored.Filled.TrendingDown),
             ReportTileItem("Préstamos Activos", TileYellow, Icons.Default.Handshake),
             ReportTileItem("Rentas Activas", TileYellow, Icons.Default.ShoppingCartCheckout),
             ReportTileItem("Producto Ventas", TilePurple, Icons.Default.PointOfSale),
@@ -102,8 +140,8 @@ fun ReportsScreen(
             ReportTileItem("Merma Productos", TileOlive, Icons.Default.DeleteSweep),
             ReportTileItem("Merma Materia Prima", TileOlive, Icons.Default.AutoDelete),
             ReportTileItem("Forma Pago", TileTeal, Icons.Default.Payments),
-            ReportTileItem("Etiqueta Venta", TileTeal, Icons.Default.Label),
-            ReportTileItem("Etiqueta Compra", TileTeal, Icons.Default.LabelImportant),
+            ReportTileItem("Etiqueta Venta", TileTeal, Icons.AutoMirrored.Filled.Label),
+            ReportTileItem("Etiqueta Compra", TileTeal, Icons.AutoMirrored.Filled.LabelImportant),
             ReportTileItem("Cotización Reporte", TileBlue, Icons.Default.Description),
             ReportTileItem("Orden Compra Reporte", TileBlue, Icons.Default.RequestQuote),
             ReportTileItem("Producto Inventario Resumen", TileBrown, Icons.Default.Inventory),
@@ -115,26 +153,43 @@ fun ReportsScreen(
 
     val permissions = remember(settings) { RoleManager.getPermissions(settings) }
     val isRestricted = !permissions.canViewFinancialReports
+    val cur = settings.currencySymbol
 
     Scaffold(
         topBar = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 CajaMaestraTopBar(
                     title = "Reportes Financieros",
-                    subtitle = if (isRestricted) "Acceso Restringido por el Dueño" else "25+ Vistas y Análisis del Negocio",
+                    subtitle = if (isRestricted) {
+                        "Acceso Restringido por el Dueño"
+                    } else {
+                        "${reportTiles.size} Reportes • ${financialSummary.periodLabel}"
+                    },
                     currentRole = settings.currentRole,
                     onOpenDrawer = onOpenDrawer,
                     actions = {
                         if (!isRestricted) {
                             IconButton(onClick = onShowTutorial) {
-                                Icon(Icons.Default.HelpOutline, contentDescription = "Ayuda", tint = Color.White)
+                                Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = "Ayuda", tint = Color.White)
                             }
                         }
                     }
                 )
 
-                // KPI Dashboard Ribbon (Hidden when restricted or when KPIs are confidential)
+                // Live Date-Filtered KPI Dashboard Ribbon
                 if (permissions.canViewKpiRibbon) {
+                    val grossDisplay = when (financialSummary.costCoverage) {
+                        CostCoverage.COMPLETE, CostCoverage.NO_SALES ->
+                            ReportsEngine.formatCurrency(financialSummary.grossProfit ?: 0.0, cur)
+                        CostCoverage.PARTIAL -> "Parcial"
+                        CostCoverage.UNAVAILABLE -> "Sin costo"
+                    }
+                    val grossSubDisplay = when (financialSummary.costCoverage) {
+                        CostCoverage.COMPLETE, CostCoverage.NO_SALES ->
+                            "Neta: ${ReportsEngine.formatCurrency(financialSummary.netProfit ?: 0.0, cur)}"
+                        CostCoverage.PARTIAL, CostCoverage.UNAVAILABLE -> "Falta costo hist."
+                    }
+
                     Surface(
                         color = BrandNavyElevated,
                         modifier = Modifier.fillMaxWidth()
@@ -146,22 +201,34 @@ fun ReportsScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             ReportKpiCard(
-                                title = "Ventas Totales",
-                                amount = "${settings.currencySymbol}${String.format(Locale.US, "%.0f", totalSales)}",
+                                title = "Ventas Conf.",
+                                amount = ReportsEngine.formatCurrency(financialSummary.confirmedSalesTotal, cur),
+                                subText = "Cobrado: ${ReportsEngine.formatCurrency(financialSummary.collectedSalesTotal, cur)}",
                                 color = BrandEmerald,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("kpi_confirmed_sales")
                             )
                             ReportKpiCard(
-                                title = "Compras / Stock",
-                                amount = "${settings.currencySymbol}${String.format(Locale.US, "%.0f", totalPurchases)}",
+                                title = "Compras / Gastos",
+                                amount = ReportsEngine.formatCurrency(financialSummary.purchasesTotal, cur),
+                                subText = "Gastos Ext: ${ReportsEngine.formatCurrency(financialSummary.extraExpensesTotal, cur)}",
                                 color = BrandAmber,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("kpi_purchases_expenses")
                             )
                             ReportKpiCard(
-                                title = "Ganancia Bruta",
-                                amount = "${settings.currencySymbol}${String.format(Locale.US, "%.0f", estimatedProfit)}",
-                                color = BrandBlue,
-                                modifier = Modifier.weight(1f)
+                                title = "Utilidad Bruta",
+                                amount = grossDisplay,
+                                subText = grossSubDisplay,
+                                color = when {
+                                    (financialSummary.grossProfit ?: 0.0) < 0.0 -> StatusCancelled
+                                    else -> BrandBlue
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("kpi_gross_profit")
                             )
                         }
                     }
@@ -212,7 +279,7 @@ fun ReportsScreen(
                             text = "El Dueño o Administrador ha limitado la visualización de los Reportes Financieros y balances de utilidades para el rol de Trabajador.",
                             fontSize = 13.sp,
                             color = TextMedium,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
@@ -236,274 +303,259 @@ fun ReportsScreen(
             ) {
                 // Period Filter Chips
                 LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                listOf(
-                    DateFilterType.HOY to "Hoy",
-                    DateFilterType.ULTIMA_SEMANA to "Última Semana",
-                    DateFilterType.ESTE_MES to "Este Mes",
-                    DateFilterType.TODOS to "Todo el Historial"
-                ).forEach { (filterType, label) ->
-                    val isSelected = dateFilter == filterType
-                    item {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) BrandNavy else SurfaceWhite,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) BrandNavy else SurfaceHover),
-                            modifier = Modifier
-                                .height(34.dp)
-                                .clickable { viewModel.setReportDateFilter(filterType) }
-                        ) {
-                            Text(
-                                text = label,
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                                color = if (isSelected) Color.White else TextMedium,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
-                            )
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        DateFilterType.HOY to "Hoy",
+                        DateFilterType.ULTIMA_SEMANA to "Última Semana",
+                        DateFilterType.ESTE_MES to "Este Mes",
+                        DateFilterType.TODOS to "Todo el Historial"
+                    ).forEach { (filterType, label) ->
+                        val isSelected = dateFilter == filterType
+                        item {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) BrandNavy else SurfaceWhite,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) BrandNavy else SurfaceHover),
+                                modifier = Modifier
+                                    .height(34.dp)
+                                    .clickable { viewModel.setReportDateFilter(filterType) }
+                                    .testTag("date_filter_${filterType.name.lowercase()}")
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                    color = if (isSelected) Color.White else TextMedium,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            // Grid of 25+ Report Tiles
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                contentPadding = PaddingValues(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(reportTiles) { tile ->
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = tile.color,
-                        shadowElevation = 3.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(110.dp)
-                            .clickable { viewModel.openReportDetail(tile.title) }
-                            .testTag("report_tile_${tile.title.lowercase().replace(" ", "_")}")
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                            modifier = Modifier.padding(10.dp)
+                // Grid of all 41 Report Tiles + Financial Summary Snapshot Header
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    contentPadding = PaddingValues(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("reports_tiles_grid")
+                ) {
+                    if (permissions.canViewKpiRibbon) {
+                        item(span = { GridItemSpan(2) }) {
+                            FinancialSnapshotCard(summary = financialSummary, cur = cur)
+                        }
+                    }
+
+                    items(reportTiles) { tile ->
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = tile.color,
+                            shadowElevation = 3.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(110.dp)
+                                .clickable { viewModel.openReportDetail(tile.title) }
+                                .testTag("report_tile_${tile.title.lowercase().replace(" ", "_")}")
                         ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.White.copy(alpha = 0.22f),
-                                modifier = Modifier.size(36.dp)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                                modifier = Modifier.padding(10.dp)
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = tile.icon,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.White.copy(alpha = 0.22f),
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = tile.icon,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = tile.title,
+                                    color = Color.White,
+                                    fontFamily = DisplayFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 16.sp,
+                                    maxLines = 2
+                                )
                             }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = tile.title,
-                                color = Color.White,
-                                fontFamily = DisplayFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                textAlign = TextAlign.Center,
-                                lineHeight = 16.sp,
-                                maxLines = 2
-                            )
                         }
                     }
                 }
             }
         }
     }
+
+    // Detailed Report Modal with full-column preview, visual bar chart & CSV/PDF export
+    if (selectedReportTitle != null) {
+        val generatedReport = remember(selectedReportTitle, dateFilter, dataset, settings.currencySymbol) {
+            ReportsEngine.buildReport(
+                title = selectedReportTitle!!,
+                dateFilter = dateFilter,
+                dataset = dataset,
+                settings = settings
+            )
+        }
+
+        ReportDetailDialog(
+            report = generatedReport,
+            businessName = settings.businessName,
+            activeFilter = dateFilter,
+            onFilterChange = { viewModel.setReportDateFilter(it) },
+            onDismiss = { viewModel.closeReportDetail() }
+        )
+    }
 }
 
-    // Detailed Report Dialog with Export to PDF & Excel
-    if (selectedReportTitle != null) {
-        val title = selectedReportTitle!!
+@Composable
+private fun FinancialSnapshotCard(
+    summary: FinancialSummary,
+    cur: String
+) {
+    val maxVal = maxOf(
+        summary.collectedSalesTotal,
+        summary.creditSalesTotal,
+        summary.purchasesTotal,
+        summary.extraExpensesTotal,
+        1.0
+    )
 
-        val rows = remember(title, dateFilter, sales, purchases, inventory, movements) {
-            when {
-                title.contains("Ventas", ignoreCase = true) -> {
-                    sales.map {
-                        listOf(it.folio, it.customerName, "${settings.currencySymbol}${it.total}", it.paymentMethod, it.status.name)
-                    }
-                }
-                title.contains("Compras", ignoreCase = true) || title.contains("Orden Compra", ignoreCase = true) -> {
-                    purchases.map {
-                        listOf(it.folio, it.supplierName, "${settings.currencySymbol}${it.total}", if (it.isCredit) "Crédito" else "Pagada")
-                    }
-                }
-                title.contains("Proveedor", ignoreCase = true) -> {
-                    suppliers.map {
-                        listOf(it.name, it.company, it.phone, it.paymentTerms, it.suppliedProducts)
-                    }
-                }
-                title.contains("Cliente", ignoreCase = true) -> {
-                    clients.map {
-                        listOf(it.name, it.phone, "${settings.currencySymbol}${it.creditBalance}", it.notes)
-                    }
-                }
-                title.contains("Inventario", ignoreCase = true) || title.contains("Producto", ignoreCase = true) -> {
-                    inventory.map {
-                        listOf(it.code, it.name, "${it.stock} ${it.unit}", "${settings.currencySymbol}${it.salePrice}", it.category)
-                    }
-                }
-                else -> {
-                    sales.map {
-                        listOf(it.folio, it.customerName, "${settings.currencySymbol}${it.total}", it.sellerName)
-                    }
-                }
-            }
-        }
-
-        val headers = remember(title) {
-            when {
-                title.contains("Ventas", ignoreCase = true) -> listOf("Folio", "Cliente", "Total", "Método", "Estado")
-                title.contains("Compras", ignoreCase = true) -> listOf("Folio", "Proveedor", "Total", "Tipo")
-                title.contains("Proveedor", ignoreCase = true) -> listOf("Nombre", "Empresa", "Teléfono", "Condiciones", "Productos")
-                title.contains("Cliente", ignoreCase = true) -> listOf("Nombre", "Teléfono", "Saldo Crédito", "Notas")
-                title.contains("Inventario", ignoreCase = true) || title.contains("Producto", ignoreCase = true) -> listOf("Código", "Nombre", "Existencia", "Precio Venta", "Categoría")
-                else -> listOf("Folio", "Cliente", "Monto", "Responsable")
-            }
-        }
-
-        Dialog(
-            onDismissRequest = { viewModel.closeReportDetail() },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = SurfaceWhite,
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 500.dp)
-                    .padding(horizontal = 16.dp, vertical = 20.dp)
-                    .imePadding()
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = SurfaceWhite,
+        border = androidx.compose.foundation.BorderStroke(1.dp, SurfaceHover),
+        shadowElevation = 2.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("financial_snapshot_card")
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
+                Text(
+                    text = "Balance del Período",
+                    fontFamily = DisplayFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = BrandNavy
+                )
+                Text(
+                    text = "${summary.confirmedSalesCount} vtas • ${summary.quotesCount} cot. • ${summary.canceledSalesCount} canc.",
+                    fontSize = 11.sp,
+                    color = TextMuted
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 4 proportional indicators: Cobrado, Crédito, Compras, Gastos
+            val bars = listOf(
+                Triple("Cobrado", summary.collectedSalesTotal, BrandEmerald),
+                Triple("Crédito", summary.creditSalesTotal, BrandAmber),
+                Triple("Compras", summary.purchasesTotal, BrandBlue),
+                Triple("Gastos Ext.", summary.extraExpensesTotal, TileSalmon)
+            )
+            bars.forEach { (label, amount, barColor) ->
+                val ratio = (amount / maxVal).toFloat().coerceIn(0f, 1f)
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp)
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = title,
-                                fontFamily = DisplayFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp,
-                                color = TextDark
-                            )
-                            Text(
-                                text = "${rows.size} registros encontrados",
-                                fontSize = 12.sp,
-                                color = TextMuted
-                            )
-                        }
-                        IconButton(onClick = { viewModel.closeReportDetail() }) {
-                            Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = TextMedium)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Records table preview
-                    Surface(
-                        color = CanvasLight,
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, SurfaceHover),
+                    Text(
+                        text = label,
+                        fontSize = 10.sp,
+                        color = TextMedium,
+                        modifier = Modifier.width(68.dp)
+                    )
+                    Canvas(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f, fill = false)
-                            .heightIn(max = 280.dp)
+                            .weight(1f)
+                            .height(8.dp)
                     ) {
-                        if (rows.isEmpty()) {
-                            Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                                Text("No hay datos en este período.", color = TextMuted, fontSize = 13.sp)
-                            }
-                        } else {
-                            LazyColumn(modifier = Modifier.padding(8.dp)) {
-                                items(rows) { row ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 4.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(row.getOrNull(0) ?: "", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextDark)
-                                        Text(row.getOrNull(1) ?: "", fontSize = 12.sp, color = TextMedium, maxLines = 1)
-                                        Text(row.getOrNull(2) ?: "", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BrandEmeraldDark)
-                                    }
-                                    HorizontalDivider(color = SurfaceHover)
-                                }
-                            }
+                        drawRoundRect(
+                            color = Color(0xFFF1F5F9),
+                            topLeft = Offset.Zero,
+                            size = Size(size.width, size.height),
+                            cornerRadius = CornerRadius(5f, 5f)
+                        )
+                        if (ratio > 0f) {
+                            drawRoundRect(
+                                color = barColor,
+                                topLeft = Offset.Zero,
+                                size = Size(size.width * ratio, size.height),
+                                cornerRadius = CornerRadius(5f, 5f)
+                            )
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Export Buttons: PDF and Excel
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                ReportExporter.exportToExcel(
-                                    context = context,
-                                    reportTitle = title.replace(" ", "_"),
-                                    headers = headers,
-                                    rows = rows
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = BrandEmerald),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp)
-                        ) {
-                            Icon(Icons.Default.TableChart, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Excel (CSV)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        }
-
-                        Button(
-                            onClick = {
-                                ReportExporter.printReportAsPdf(
-                                    context = context,
-                                    reportTitle = title,
-                                    businessName = settings.businessName,
-                                    headers = headers,
-                                    rows = rows
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = BrandBlue),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp)
-                        ) {
-                            Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("PDF", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        }
-                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = ReportsEngine.formatCurrency(amount, cur),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextDark
+                    )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            HorizontalDivider(color = SurfaceHover)
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Ing. Ext: ${ReportsEngine.formatCurrency(summary.extraIncomeTotal, cur)}",
+                    fontSize = 10.sp,
+                    color = BrandEmeraldDark,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Cotiz: ${ReportsEngine.formatCurrency(summary.quotesPendingTotal, cur)}",
+                    fontSize = 10.sp,
+                    color = BrandBlue,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Caja Ent/Ret: ${ReportsEngine.formatCurrency(summary.cashDrawerEntriesTotal, cur)} / ${ReportsEngine.formatCurrency(summary.cashDrawerWithdrawalsTotal, cur)}",
+                    fontSize = 10.sp,
+                    color = TextMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            if (summary.profitLimitationNote != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = summary.profitLimitationNote,
+                    fontSize = 10.sp,
+                    color = BrandAmberDark,
+                    lineHeight = 13.sp
+                )
             }
         }
     }
@@ -513,6 +565,7 @@ fun ReportsScreen(
 private fun ReportKpiCard(
     title: String,
     amount: String,
+    subText: String,
     color: Color,
     modifier: Modifier = Modifier
 ) {
@@ -537,8 +590,17 @@ private fun ReportKpiCard(
                 text = amount,
                 fontFamily = DisplayFontFamily,
                 fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                color = color
+                fontSize = 14.sp,
+                color = color,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = subText,
+                fontSize = 9.sp,
+                color = TextLightSecondary.copy(alpha = 0.85f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

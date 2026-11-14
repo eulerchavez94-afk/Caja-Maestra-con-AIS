@@ -59,7 +59,40 @@ data class InventoryItem(
     val unit: String = "Pza",
     val type: ItemType = ItemType.PRODUCTO,
     val isWaste: Boolean = false,
+    val isRawMaterial: Boolean = false,
     val notes: String = ""
+)
+
+enum class InventoryMovementType {
+    ENTRADA_COMPRA,
+    SALIDA_VENTA,
+    RESTITUCION_CANCELACION,
+    AJUSTE_MANUAL,
+    ALTA_INVENTARIO,
+    EDICION_STOCK
+}
+
+@Entity(
+    tableName = "inventory_movements",
+    indices = [
+        Index(value = ["itemId"]),
+        Index(value = ["date"]),
+        Index(value = ["movementType"])
+    ]
+)
+data class InventoryMovement(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val itemId: Long,
+    val itemCode: String,
+    val itemName: String,
+    val movementType: InventoryMovementType,
+    val quantityDelta: Double,
+    val previousStock: Double,
+    val newStock: Double,
+    val referenceFolio: String = "",
+    val reason: String = "",
+    val performedBy: String = "",
+    val date: Long = System.currentTimeMillis()
 )
 
 data class SaleCartItem(
@@ -75,6 +108,11 @@ data class SaleCartItem(
     val totalCost: Double get() = quantity * costPrice
 }
 
+enum class CashShiftMovementType {
+    ENTRADA,
+    RETIRO
+}
+
 @Entity(
     tableName = "sales",
     indices = [
@@ -82,7 +120,8 @@ data class SaleCartItem(
         Index(value = ["folio"]),
         Index(value = ["type"]),
         Index(value = ["status"]),
-        Index(value = ["customerId"])
+        Index(value = ["customerId"]),
+        Index(value = ["shiftId"])
     ]
 )
 data class Sale(
@@ -101,7 +140,55 @@ data class Sale(
     val date: Long = System.currentTimeMillis(),
     val sellerName: String = "Administrador",
     val notes: String = "",
-    val itemsJson: String = ""
+    val itemsJson: String = "",
+    val shiftId: Long? = null
+)
+
+@Entity(
+    tableName = "cash_shifts",
+    indices = [
+        Index(value = ["openedAt"]),
+        Index(value = ["isOpen"])
+    ]
+)
+data class CashRegisterShift(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val cashierName: String,
+    val cashierRole: UserRole = UserRole.TRABAJADOR,
+    val openedAt: Long = System.currentTimeMillis(),
+    val closedAt: Long? = null,
+    val openingFloat: Double = 0.0,
+    val cashSalesTotal: Double = 0.0,
+    val cardSalesTotal: Double = 0.0,
+    val transferSalesTotal: Double = 0.0,
+    val creditSalesTotal: Double = 0.0,
+    val cashEntriesTotal: Double = 0.0,
+    val cashWithdrawalsTotal: Double = 0.0,
+    val expectedCash: Double = 0.0,
+    val countedCash: Double = 0.0,
+    val difference: Double = 0.0,
+    val nextTurnFloat: Double = 0.0,
+    val salesCount: Int = 0,
+    val isOpen: Boolean = true,
+    val openingNotes: String = "",
+    val closingNotes: String = ""
+)
+
+@Entity(
+    tableName = "cash_shift_movements",
+    indices = [
+        Index(value = ["shiftId"]),
+        Index(value = ["date"])
+    ]
+)
+data class CashShiftMovement(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val shiftId: Long,
+    val type: CashShiftMovementType,
+    val amount: Double,
+    val reason: String,
+    val performedBy: String,
+    val date: Long = System.currentTimeMillis()
 )
 
 @Entity(
@@ -218,7 +305,13 @@ data class Employee(
     val email: String = "",
     val address: String = "",
     val role: UserRole = UserRole.TRABAJADOR,
-    val pin: String = "1234"
+    val pin: String = ""
+)
+
+@Entity(tableName = "folio_sequences")
+data class FolioSequence(
+    @PrimaryKey val sequenceKey: String,
+    val lastNumber: Long
 )
 
 data class BusinessSettings(
@@ -247,7 +340,6 @@ data class BusinessSettings(
     val printScale: Float = 1.0f,
     val printIntensity: Int = 165,
     val restrictWithPin: Boolean = false,
-    val masterPin: String = "1234",
     val currentRole: UserRole = UserRole.DUENO,
     val currentUserName: String = "Jefe / Dueño",
     val externalScanner: Boolean = false,
@@ -259,10 +351,6 @@ data class BusinessSettings(
     val trialDurationDays: Int = 7,
     val trialStartDate: Long = 0L,
     val appLockReason: String = "Periodo de prueba finalizado. Contacte al Administrador.",
-    // Admin Master Passwords
-    val adminPassword: String = "Admin",
-    val jefePassword: String = "Jefe",
-    val trabajadorPassword: String = "Trabajador",
     // Admin Module Permissions (Toggles controlled by Admin)
     val moduleInventoryEnabled: Boolean = true,
     val moduleSalesEnabled: Boolean = true,

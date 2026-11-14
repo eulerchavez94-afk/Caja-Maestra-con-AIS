@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -28,6 +29,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.ExtraMovement
 import com.example.data.model.MovementType
 import com.example.data.model.UserRole
+import com.example.ui.components.CajaMaestraEmptyState
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MainViewModel
 import com.example.util.RoleManager
@@ -46,6 +48,7 @@ fun ExtraMovementsScreen(
     val settings by viewModel.settings.collectAsState()
 
     var showAddDialog by remember { mutableStateOf(false) }
+    var movementToDelete by remember { mutableStateOf<ExtraMovement?>(null) }
     var selectedFilter by remember { mutableStateOf<MovementType?>(null) } // null = Todos
 
     val totalIngresos = movements.filter { it.type == MovementType.INGRESO }.sumOf { it.amount }
@@ -146,17 +149,23 @@ fun ExtraMovementsScreen(
             }
 
             if (displayedMovements.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Presione el botón +",
-                        color = Color.Gray,
-                        fontSize = 16.sp,
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                    )
-                }
+                CajaMaestraEmptyState(
+                    icon = Icons.Default.SwapVert,
+                    title = if (selectedFilter == null) "Sin Movimientos Extra" else "Sin Movimientos en Este Filtro",
+                    description = "Registra ingresos adicionales o gastos operativos (servicios, mantenimiento, nómina) para mantener actualizado tu flujo neto.",
+                    actionButtonText = when {
+                        selectedFilter != null -> "Ver Todos"
+                        canAddMovement -> "+ Registrar Movimiento"
+                        else -> ""
+                    },
+                    onActionClick = {
+                        if (selectedFilter != null) {
+                            selectedFilter = null
+                        } else if (canAddMovement) {
+                            showAddDialog = true
+                        }
+                    }
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -194,7 +203,10 @@ fun ExtraMovementsScreen(
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column {
                                         Text(mov.concept, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = NavyDark)
-                                        Text("${mov.category} &bull; $dateStr", fontSize = 11.sp, color = Color.Gray)
+                                        Text("${mov.category} • $dateStr", fontSize = 11.sp, color = Color.Gray)
+                                        if (mov.notes.isNotBlank()) {
+                                            Text(mov.notes, fontSize = 11.sp, color = TextMuted, maxLines = 1)
+                                        }
                                     }
                                 }
 
@@ -206,7 +218,7 @@ fun ExtraMovementsScreen(
                                         color = if (mov.type == MovementType.INGRESO) TileGreen else TileSalmon
                                     )
                                     if (permissions.canDeleteExtraMovement) {
-                                        IconButton(onClick = { viewModel.deleteExtraMovement(mov) }, modifier = Modifier.size(28.dp)) {
+                                        IconButton(onClick = { movementToDelete = mov }, modifier = Modifier.size(28.dp)) {
                                             Icon(Icons.Default.Close, contentDescription = "Eliminar", tint = Color.LightGray, modifier = Modifier.size(16.dp))
                                         }
                                     }
@@ -237,6 +249,29 @@ fun ExtraMovementsScreen(
             }
         )
     }
+
+    movementToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { movementToDelete = null },
+            title = { Text("Eliminar Movimiento", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Deseas eliminar '${target.concept}' (${settings.currencySymbol}${String.format(Locale.US, "%.2f", target.amount)})?", fontSize = 13.sp) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteExtraMovement(target)
+                        movementToDelete = null
+                        Toast.makeText(context, "Movimiento eliminado", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TileSalmon)
+                ) {
+                    Text("Eliminar", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { movementToDelete = null }) { Text("Cancelar") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -250,6 +285,7 @@ fun AddMovementDialog(
     var amountText by remember { mutableStateOf("") }
     var isCredit by remember { mutableStateOf(false) }
     var notes by remember { mutableStateOf("") }
+    var validationError by remember { mutableStateOf<String?>(null) }
 
     val categories = listOf("Servicios Básicos", "Mantenimiento", "Publicidad", "Comisiones", "Transporte", "Nómina extra", "Otros")
 
@@ -294,7 +330,10 @@ fun AddMovementDialog(
 
                 OutlinedTextField(
                     value = concept,
-                    onValueChange = { concept = it },
+                    onValueChange = {
+                        concept = it
+                        validationError = null
+                    },
                     label = { Text("Concepto *") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -302,12 +341,25 @@ fun AddMovementDialog(
 
                 OutlinedTextField(
                     value = amountText,
-                    onValueChange = { amountText = it },
+                    onValueChange = {
+                        amountText = it
+                        validationError = null
+                    },
                     label = { Text("Monto ($) *") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(categories) { cat ->
+                        FilterChip(
+                            selected = category.equals(cat, ignoreCase = true),
+                            onClick = { category = cat },
+                            label = { Text(cat, fontSize = 11.sp) }
+                        )
+                    }
+                }
 
                 OutlinedTextField(
                     value = category,
@@ -317,9 +369,21 @@ fun AddMovementDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text("Notas / Referencia (opcional)") },
+                    maxLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = isCredit, onCheckedChange = { isCredit = it })
                     Text("Movimiento a Crédito", fontSize = 13.sp)
+                }
+
+                validationError?.let { err ->
+                    Text(err, color = TileSalmon, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -327,9 +391,17 @@ fun AddMovementDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            val amt = amountText.toDoubleOrNull() ?: 0.0
-                            if (concept.isNotBlank() && amt > 0) {
-                                onSave(type, concept.trim(), category.trim(), amt, isCredit, notes.trim())
+                            val amt = amountText.toDoubleOrNull()
+                            when {
+                                concept.isBlank() -> {
+                                    validationError = "El concepto es obligatorio."
+                                }
+                                amt == null || !amt.isFinite() || amt <= 0.0 -> {
+                                    validationError = "Ingresa un monto válido mayor a cero."
+                                }
+                                else -> {
+                                    onSave(type, concept.trim(), category.trim().ifEmpty { "Otros" }, amt, isCredit, notes.trim())
+                                }
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = GoldAccent)

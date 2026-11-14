@@ -16,13 +16,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.example.data.model.UserRole
 import com.example.ui.components.BluetoothPrinterDialog
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.MainViewModel
+import com.example.ui.viewmodel.RecoveryResult
+import com.example.ui.viewmodel.SecurityActionResult
 import com.example.util.BluetoothPrinterManager
 import com.example.util.RoleManager
 import com.example.util.ThermalPrinterUtil
@@ -37,17 +43,25 @@ fun ConfigScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val settings by viewModel.settings.collectAsState()
+    val securityState by viewModel.securityState.collectAsState()
+    val lastSecurityError by viewModel.lastSecurityError.collectAsState()
 
     var showPinDialog by remember { mutableStateOf(false) }
     var showWipeConfirmDialog by remember { mutableStateOf(false) }
     var showCurrencyDialog by remember { mutableStateOf(false) }
     var showPrinterDialog by remember { mutableStateOf(false) }
     var isTestingPrinter by remember { mutableStateOf(false) }
-    var selectedCurrency by remember { mutableStateOf(settings.currencySymbol) }
     var showPasswordDialog by remember { mutableStateOf(false) }
-    var targetRoleForPassword by remember { mutableStateOf(com.example.data.model.UserRole.TRABAJADOR) }
-    var newPasswordInput by remember { mutableStateOf("") }
+    var targetRoleForPassword by remember { mutableStateOf(UserRole.TRABAJADOR) }
+    var showRecoveryConfigDialog by remember { mutableStateOf(false) }
     val permissions = remember(settings) { RoleManager.getPermissions(settings) }
+
+    LaunchedEffect(lastSecurityError) {
+        lastSecurityError?.let { err ->
+            Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+            viewModel.clearSecurityError()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -389,11 +403,10 @@ fun ConfigScreen(
 
                             Spacer(modifier = Modifier.height(14.dp))
 
-                            if (settings.currentRole == com.example.data.model.UserRole.ADMINISTRADOR) {
+                            if (settings.currentRole == UserRole.ADMINISTRADOR) {
                                 OutlinedButton(
                                     onClick = {
-                                        targetRoleForPassword = com.example.data.model.UserRole.ADMINISTRADOR
-                                        newPasswordInput = settings.adminPassword
+                                        targetRoleForPassword = UserRole.ADMINISTRADOR
                                         showPasswordDialog = true
                                     },
                                     modifier = Modifier.fillMaxWidth()
@@ -407,8 +420,7 @@ fun ConfigScreen(
 
                             OutlinedButton(
                                 onClick = {
-                                    targetRoleForPassword = com.example.data.model.UserRole.DUENO
-                                    newPasswordInput = settings.jefePassword
+                                    targetRoleForPassword = UserRole.DUENO
                                     showPasswordDialog = true
                                 },
                                 modifier = Modifier.fillMaxWidth()
@@ -422,8 +434,7 @@ fun ConfigScreen(
 
                             OutlinedButton(
                                 onClick = {
-                                    targetRoleForPassword = com.example.data.model.UserRole.TRABAJADOR
-                                    newPasswordInput = settings.trabajadorPassword
+                                    targetRoleForPassword = UserRole.TRABAJADOR
                                     showPasswordDialog = true
                                 },
                                 modifier = Modifier.fillMaxWidth()
@@ -431,6 +442,19 @@ fun ConfigScreen(
                                 Icon(Icons.Default.Badge, contentDescription = null, tint = BrandEmerald)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Cambiar Clave: Trabajador", fontWeight = FontWeight.SemiBold)
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            OutlinedButton(
+                                onClick = { showRecoveryConfigDialog = true },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("manage_offline_recovery_button")
+                            ) {
+                                Icon(Icons.Default.Key, contentDescription = null, tint = BrandNavy)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Recuperación Offline (Código / Pregunta)", fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
@@ -465,7 +489,9 @@ fun ConfigScreen(
                 ConfigNavRow(
                     title = "Tamaño Imagen",
                     subtitle = "300 Píxeles (óptimo para balance de almacenamiento en la app)",
-                    onClick = {}
+                    onClick = {
+                        Toast.makeText(context, "Optimización automática fija a 300 px para ticket y catálogo.", Toast.LENGTH_SHORT).show()
+                    }
                 )
             }
 
@@ -473,7 +499,9 @@ fun ConfigScreen(
                 ConfigNavRow(
                     title = "Carpeta de descarga",
                     subtitle = ".../Download",
-                    onClick = {}
+                    onClick = {
+                        Toast.makeText(context, "Los reportes PDF/CSV y respaldos exportados se guardan en Descargas.", Toast.LENGTH_SHORT).show()
+                    }
                 )
             }
 
@@ -565,21 +593,38 @@ fun ConfigScreen(
                 )
             }
 
-            // Restringir Acceso Section (Matches Screenshot 16)
-            item {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Restringir Acceso", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = GoldDark)
-            }
+            // Restringir Acceso Section (Solo Dueño y Administrador)
+            if (permissions.canAccessJefePanel || permissions.canAccessAdminPanel) {
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Restringir Acceso", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = GoldDark)
+                }
 
-            item {
-                ConfigSwitchRow(
-                    title = "Restringir Acceso",
-                    subtitle = "Restringir acceso por contraseña a las secciones (Reportes, Configuración)",
-                    checked = settings.restrictWithPin,
-                    onCheckedChange = {
-                        if (it) showPinDialog = true else viewModel.updateSettings(settings.copy(restrictWithPin = false))
-                    }
-                )
+                item {
+                    ConfigSwitchRow(
+                        title = "Restringir Acceso",
+                        subtitle = "Restringir acceso por PIN maestro a Reportes y Configuración",
+                        checked = settings.restrictWithPin,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showPinDialog = true
+                            } else {
+                                when (val res = viewModel.disablePinRestriction()) {
+                                    is SecurityActionResult.Success -> Toast.makeText(
+                                        context,
+                                        "Restricción por PIN desactivada",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    is SecurityActionResult.Error -> Toast.makeText(
+                                        context,
+                                        res.message,
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                        }
+                    )
+                }
             }
 
             // Impresión Bluetooth 58mm Section (Matches Screenshot 16 - Solo si el Admin la tiene habilitada)
@@ -594,8 +639,6 @@ fun ConfigScreen(
                         title = "Nombre impresora vinculada",
                         subtitle = if (settings.bluetoothPrinterAddress.isNotBlank()) {
                             "${settings.bluetoothPrinterName} (${settings.bluetoothPrinterAddress})"
-                        } else if (settings.bluetoothPrinterName.isNotBlank() && settings.bluetoothPrinterName != "POS-58 (Bluetooth)") {
-                            settings.bluetoothPrinterName
                         } else {
                             "Toca para vincular y seleccionar tu impresora 58mm"
                         },
@@ -704,11 +747,11 @@ fun ConfigScreen(
                 }
             }
 
-            // Seguridad & Salva en la Nube (Solo si el Admin la tiene habilitada)
+            // Seguridad & Respaldo Offline (Solo si el Admin lo tiene habilitado)
             if (permissions.canAccessCloudBackup) {
                 item {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Seguridad y Salva en la Nube", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = GoldDark)
+                    Text("Seguridad y Respaldo Offline", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = GoldDark)
                 }
 
                 item {
@@ -721,22 +764,22 @@ fun ConfigScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Security, contentDescription = null, tint = TileGreen)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Cifrado AES-256 Activo", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = NavyDark)
+                                Text("Cifrado AES-256-GCM Offline Activo", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = NavyDark)
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "La base de datos local y los respaldos están protegidos mediante cifrado criptográfico simétrico AES-256-GCM con PBKDF2.",
+                                "La bóveda local y los archivos de respaldo (.cmbak) están protegidos con AES-256-GCM y derivación PBKDF2-HMAC-SHA256 sin dependencia de internet.",
                                 fontSize = 12.sp,
                                 color = Color.DarkGray
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             OutlinedButton(
                                 onClick = { viewModel.performManualCloudSync() },
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp)
                             ) {
-                                Icon(Icons.Default.CloudSync, contentDescription = null)
+                                Icon(Icons.Default.Backup, contentDescription = null)
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Ejecutar Salva Manual en la Nube")
+                                Text("Abrir Respaldo Local y Restauración (.cmbak)")
                             }
                         }
                     }
@@ -758,7 +801,7 @@ fun ConfigScreen(
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Text(
-                                text = "Se elimina la información: inventario, ventas, compras, ingresos-gastos extra, reportes, etc. Este proceso no es reversible.",
+                                text = "Elimina irreversiblemente los registros operativos: inventario, movimientos de inventario, ventas, cotizaciones, compras, movimientos extra, rentas, turnos de caja, clientes, proveedores y empleados. Conserva configuración, contraseñas y folios históricos.",
                                 fontSize = 12.sp,
                                 color = Color.DarkGray
                             )
@@ -817,26 +860,58 @@ fun ConfigScreen(
 
     if (showPinDialog) {
         var pinInput by remember { mutableStateOf("") }
+        var pinConfirmInput by remember { mutableStateOf("") }
+        var pinError by remember { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { showPinDialog = false },
             modifier = Modifier.imePadding(),
-            title = { Text("Definir PIN de Acceso") },
+            title = { Text("Definir PIN Maestro de Acceso") },
             text = {
-                OutlinedTextField(
-                    value = pinInput,
-                    onValueChange = { pinInput = it },
-                    label = { Text("PIN de 4 dígitos") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = {
+                            pinInput = it.filter { ch -> ch.isDigit() }
+                            pinError = null
+                        },
+                        label = { Text("Nuevo PIN (4 a 8 dígitos)") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = pinConfirmInput,
+                        onValueChange = {
+                            pinConfirmInput = it.filter { ch -> ch.isDigit() }
+                            pinError = null
+                        },
+                        label = { Text("Confirmar PIN") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    pinError?.let { err ->
+                        Text(err, color = TileSalmon, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (pinInput.length >= 4) {
-                            viewModel.updateSettings(settings.copy(restrictWithPin = true, masterPin = pinInput))
-                            showPinDialog = false
-                            Toast.makeText(context, "PIN de acceso activado", Toast.LENGTH_SHORT).show()
+                        if (pinInput != pinConfirmInput) {
+                            pinError = "Los PIN ingresados no coinciden."
+                        } else {
+                            when (val res = viewModel.enablePinRestriction(pinInput)) {
+                                is SecurityActionResult.Success -> {
+                                    showPinDialog = false
+                                    Toast.makeText(context, "PIN maestro activado", Toast.LENGTH_SHORT).show()
+                                }
+                                is SecurityActionResult.Error -> {
+                                    pinError = res.message
+                                }
+                            }
                         }
                     }
                 ) {
@@ -850,26 +925,70 @@ fun ConfigScreen(
     }
 
     if (showWipeConfirmDialog) {
+        var confirmIrreversible by remember { mutableStateOf(false) }
+        var isWiping by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { showWipeConfirmDialog = false },
+            onDismissRequest = { if (!isWiping) showWipeConfirmDialog = false },
             title = { Text("¿Eliminar todos los datos?") },
             text = {
-                Text("Esta acción borrará irreversiblemente el inventario, ventas, compras y reportes. ¿Desea continuar?")
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Esta acción borrará de forma irreversible las 11 tablas operativas: inventario, historial de movimientos de inventario, ventas, cotizaciones, compras, movimientos extra, rentas/préstamos, turnos y movimientos de caja, clientes, proveedores y empleados.",
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        "Se conservarán tu configuración del negocio, contraseñas/bóveda de seguridad y contadores históricos de folios.",
+                        fontSize = 12.sp,
+                        color = Color.DarkGray
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !isWiping) { confirmIrreversible = !confirmIrreversible }
+                    ) {
+                        Checkbox(
+                            checked = confirmIrreversible,
+                            onCheckedChange = { if (!isWiping) confirmIrreversible = it },
+                            modifier = Modifier.testTag("confirm_wipe_checkbox")
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            "Confirmo que esta eliminación es irreversible",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.wipeAllData()
-                        showWipeConfirmDialog = false
-                        Toast.makeText(context, "Base de datos restablecida", Toast.LENGTH_SHORT).show()
+                        if (isWiping) return@Button
+                        isWiping = true
+                        coroutineScope.launch {
+                            val ok = viewModel.wipeAllDataAsync()
+                            isWiping = false
+                            if (ok) {
+                                showWipeConfirmDialog = false
+                                Toast.makeText(context, "Base de datos operativa restablecida", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "No autorizado para borrar la información", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = TileSalmon)
+                    enabled = confirmIrreversible && !isWiping,
+                    colors = ButtonDefaults.buttonColors(containerColor = TileSalmon),
+                    modifier = Modifier.testTag("confirm_wipe_btn")
                 ) {
-                    Text("Sí, Borrar Todo", color = Color.White)
+                    Text(if (isWiping) "Borrando..." else "Sí, Borrar Todo", color = Color.White)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showWipeConfirmDialog = false }) { Text("Cancelar") }
+                TextButton(
+                    onClick = { showWipeConfirmDialog = false },
+                    enabled = !isWiping
+                ) { Text("Cancelar") }
             }
         )
     }
@@ -895,6 +1014,11 @@ fun ConfigScreen(
     }
 
     if (showPasswordDialog) {
+        var currentActorPassword by remember { mutableStateOf("") }
+        var newPasswordInput by remember { mutableStateOf("") }
+        var confirmPasswordInput by remember { mutableStateOf("") }
+        var passwordError by remember { mutableStateOf<String?>(null) }
+
         AlertDialog(
             onDismissRequest = { showPasswordDialog = false },
             modifier = Modifier.imePadding(),
@@ -909,33 +1033,69 @@ fun ConfigScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Ingrese la nueva contraseña maestra para el rol seleccionado.",
-                        fontSize = 13.sp,
+                        text = "Por seguridad, confirma tu contraseña actual (${settings.currentRole.name}) antes de asignar la nueva clave.",
+                        fontSize = 12.sp,
                         color = Color.DarkGray
                     )
                     OutlinedTextField(
-                        value = newPasswordInput,
-                        onValueChange = { newPasswordInput = it },
-                        label = { Text("Nueva Contraseña") },
+                        value = currentActorPassword,
+                        onValueChange = {
+                            currentActorPassword = it
+                            passwordError = null
+                        },
+                        label = { Text("Tu Contraseña Actual") },
+                        visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    OutlinedTextField(
+                        value = newPasswordInput,
+                        onValueChange = {
+                            newPasswordInput = it
+                            passwordError = null
+                        },
+                        label = { Text("Nueva Contraseña") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = confirmPasswordInput,
+                        onValueChange = {
+                            confirmPasswordInput = it
+                            passwordError = null
+                        },
+                        label = { Text("Confirmar Nueva Contraseña") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    passwordError?.let { err ->
+                        Text(err, color = TileSalmon, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (newPasswordInput.isNotBlank()) {
-                            val updated = when (targetRoleForPassword) {
-                                com.example.data.model.UserRole.ADMINISTRADOR -> settings.copy(adminPassword = newPasswordInput.trim())
-                                com.example.data.model.UserRole.DUENO -> settings.copy(jefePassword = newPasswordInput.trim())
-                                com.example.data.model.UserRole.TRABAJADOR -> settings.copy(trabajadorPassword = newPasswordInput.trim())
-                            }
-                            viewModel.updateSettings(updated)
-                            Toast.makeText(context, "Contraseña actualizada exitosamente", Toast.LENGTH_SHORT).show()
-                            showPasswordDialog = false
+                        if (newPasswordInput != confirmPasswordInput) {
+                            passwordError = "Las contraseñas nuevas no coinciden."
                         } else {
-                            Toast.makeText(context, "La contraseña no puede estar vacía", Toast.LENGTH_SHORT).show()
+                            when (
+                                val res = viewModel.updateRolePassword(
+                                    targetRole = targetRoleForPassword,
+                                    currentActorPassword = currentActorPassword,
+                                    newPassword = newPasswordInput
+                                )
+                            ) {
+                                is SecurityActionResult.Success -> {
+                                    Toast.makeText(context, "Contraseña actualizada exitosamente", Toast.LENGTH_SHORT).show()
+                                    showPasswordDialog = false
+                                }
+                                is SecurityActionResult.Error -> {
+                                    passwordError = res.message
+                                }
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BrandEmerald)
@@ -946,6 +1106,133 @@ fun ConfigScreen(
             dismissButton = {
                 TextButton(onClick = { showPasswordDialog = false }) {
                     Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    if (showRecoveryConfigDialog) {
+        var currentActorPassword by remember { mutableStateOf("") }
+        var newQuestion by remember { mutableStateOf(securityState.recoveryQuestion) }
+        var newAnswer by remember { mutableStateOf("") }
+        var recoveryError by remember { mutableStateOf<String?>(null) }
+        var generatedCode by remember { mutableStateOf<String?>(null) }
+
+        AlertDialog(
+            onDismissRequest = { showRecoveryConfigDialog = false },
+            modifier = Modifier.imePadding(),
+            title = {
+                Text(
+                    text = "Recuperación Offline (${settings.currentRole.name})",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = BrandNavy
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (generatedCode != null) {
+                        Text(
+                            text = "Guarda este nuevo código de recuperación de un solo uso en un lugar seguro:",
+                            fontSize = 13.sp,
+                            color = Color.DarkGray
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = BrandNavyElevated,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = generatedCode!!,
+                                color = BrandAmber,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 18.sp,
+                                modifier = Modifier.padding(14.dp)
+                            )
+                        }
+                        Text(
+                            text = "El código anterior ha sido invalidado.",
+                            fontSize = 11.sp,
+                            color = TextMedium
+                        )
+                    } else {
+                        Text(
+                            text = "Regenera tu código offline de respaldo y, si eres Dueño, opcionalmente actualiza la pregunta de seguridad.",
+                            fontSize = 12.sp,
+                            color = Color.DarkGray
+                        )
+                        OutlinedTextField(
+                            value = currentActorPassword,
+                            onValueChange = {
+                                currentActorPassword = it
+                                recoveryError = null
+                            },
+                            label = { Text("Tu Contraseña Actual") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (settings.currentRole == UserRole.DUENO) {
+                            OutlinedTextField(
+                                value = newQuestion,
+                                onValueChange = {
+                                    newQuestion = it
+                                    recoveryError = null
+                                },
+                                label = { Text("Pregunta de Seguridad (opcional)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = newAnswer,
+                                onValueChange = {
+                                    newAnswer = it
+                                    recoveryError = null
+                                },
+                                label = { Text("Nueva Respuesta (opcional)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        recoveryError?.let { err ->
+                            Text(err, color = TileSalmon, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (generatedCode != null) {
+                    Button(
+                        onClick = { showRecoveryConfigDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandEmerald)
+                    ) {
+                        Text("Ya lo guardé", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            val qArg = if (settings.currentRole == UserRole.DUENO && newAnswer.isNotBlank()) newQuestion else null
+                            val aArg = if (settings.currentRole == UserRole.DUENO && newAnswer.isNotBlank()) newAnswer else null
+                            when (val res = viewModel.regenerateRecoveryMaterial(currentActorPassword, qArg, aArg)) {
+                                is RecoveryResult.Success -> {
+                                    generatedCode = res.newRecoveryCode
+                                }
+                                is RecoveryResult.Error -> {
+                                    recoveryError = res.message
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandEmerald)
+                    ) {
+                        Text("Generar Código", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                if (generatedCode == null) {
+                    TextButton(onClick = { showRecoveryConfigDialog = false }) {
+                        Text("Cancelar")
+                    }
                 }
             }
         )

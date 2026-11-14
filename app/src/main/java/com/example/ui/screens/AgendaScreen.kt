@@ -58,12 +58,13 @@ fun AgendaScreen(
         // Sales on credit pending collection
         sales.filter { it.status == SaleStatus.CREDITO }.forEach { s ->
             val due = s.date + 15L * 24 * 3600 * 1000 // 15 days credit
+            val pendingAmount = (s.total - s.paidAmount.coerceAtLeast(0.0)).coerceAtLeast(0.0)
             list.add(
                 AgendaTask(
                     title = "Cobro a Cliente: ${s.customerName}",
                     subtitle = "Venta Folio ${s.folio} a Crédito",
                     dueDate = due,
-                    amount = s.total,
+                    amount = pendingAmount,
                     category = "CLIENTE_CREDITO",
                     isUrgent = due - now < 3L * 24 * 3600 * 1000
                 )
@@ -111,6 +112,7 @@ fun AgendaScreen(
             com.example.ui.components.CajaMaestraTopBar(
                 title = "Agenda & Vencimientos",
                 subtitle = "${filteredTasks.size} compromisos y retornos pendientes",
+                currentRole = settings.currentRole,
                 onOpenDrawer = onOpenDrawer
             )
         }

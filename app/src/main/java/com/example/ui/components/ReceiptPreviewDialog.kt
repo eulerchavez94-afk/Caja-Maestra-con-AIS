@@ -26,6 +26,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.BusinessSettings
 import com.example.data.model.Sale
 import com.example.data.model.SaleCartItem
+import com.example.data.model.SaleStatus
 import com.example.data.model.UserRole
 import com.example.ui.theme.*
 import com.example.util.ReportExporter
@@ -38,12 +39,15 @@ fun ReceiptPreviewDialog(
     settings: BusinessSettings,
     sale: Sale,
     items: List<SaleCartItem>,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onCancelSale: (() -> Unit)? = null,
+    onPrinterSelected: ((String, String) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var showPrinterDialog by remember { mutableStateOf(false) }
     var isPrintingDirect by remember { mutableStateOf(false) }
+    var showCancelConfirm by remember { mutableStateOf(false) }
     val permissions = remember(settings) { RoleManager.getPermissions(settings) }
 
     val receiptText = remember(sale, settings, items) {
@@ -258,9 +262,56 @@ fun ReceiptPreviewDialog(
                             Text("Compartir", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
+
+                    if (permissions.canCancelSales && sale.status != SaleStatus.CANCELADA && onCancelSale != null) {
+                        OutlinedButton(
+                            onClick = { showCancelConfirm = true },
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, TileSalmon.copy(alpha = 0.65f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB4AB)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 44.dp)
+                                .testTag("cancel_sale_button")
+                        ) {
+                            Icon(Icons.Default.Cancel, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Anular Venta / Restituir Stock", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
+    }
+
+    if (showCancelConfirm && onCancelSale != null) {
+        AlertDialog(
+            onDismissRequest = { showCancelConfirm = false },
+            title = { Text("Anular ${sale.folio}", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "¿Deseas cancelar esta venta por ${settings.currencySymbol}${String.format(java.util.Locale.US, "%.2f", sale.total)}? Se restituirá el inventario automáticamente y no contará en el corte de caja.",
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCancelConfirm = false
+                        onCancelSale()
+                        Toast.makeText(context, "Venta ${sale.folio} anulada", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TileSalmon)
+                ) {
+                    Text("Sí, Anular", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelConfirm = false }) {
+                    Text("Volver")
+                }
+            }
+        )
     }
 
     if (showPrinterDialog) {
@@ -271,7 +322,7 @@ fun ReceiptPreviewDialog(
             printIntensity = settings.printIntensity,
             onDismiss = { showPrinterDialog = false },
             onPrinterSelected = { name, address ->
-                // Selected printer
+                onPrinterSelected?.invoke(name, address)
                 showPrinterDialog = false
                 Toast.makeText(context, "Impresora vinculada: $name. Toca Imprimir de nuevo.", Toast.LENGTH_LONG).show()
             }

@@ -4,11 +4,15 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.data.model.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
 
 @Database(
     entities = [
@@ -19,26 +23,272 @@ import kotlinx.coroutines.launch
         RentalLoan::class,
         Client::class,
         Supplier::class,
-        Employee::class
+        Employee::class,
+        CashRegisterShift::class,
+        CashShiftMovement::class,
+        FolioSequence::class,
+        InventoryMovement::class
     ],
-    version = 2,
+    version = 5,
     exportSchema = false
 )
 abstract class CajaMaestraDatabase : RoomDatabase() {
     abstract fun dao(): CajaMaestraDao
 
     companion object {
+        const val KEY_VENTA = "VENTA"
+        const val KEY_COTIZACION = "COTIZACION"
+        const val KEY_COMPRA = "COMPRA"
+
+        const val PREFIX_VENTA = "F-"
+        const val PREFIX_COTIZACION = "COT-"
+        const val PREFIX_COMPRA = "OC-"
+
         @Volatile
         private var INSTANCE: CajaMaestraDatabase? = null
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sales ADD COLUMN shiftId INTEGER")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sales_shiftId ON sales(shiftId)")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS cash_shifts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        cashierName TEXT NOT NULL,
+                        cashierRole TEXT NOT NULL,
+                        openedAt INTEGER NOT NULL,
+                        closedAt INTEGER,
+                        openingFloat REAL NOT NULL,
+                        cashSalesTotal REAL NOT NULL,
+                        cardSalesTotal REAL NOT NULL,
+                        transferSalesTotal REAL NOT NULL,
+                        creditSalesTotal REAL NOT NULL,
+                        cashEntriesTotal REAL NOT NULL,
+                        cashWithdrawalsTotal REAL NOT NULL,
+                        expectedCash REAL NOT NULL,
+                        countedCash REAL NOT NULL,
+                        difference REAL NOT NULL,
+                        nextTurnFloat REAL NOT NULL,
+                        salesCount INTEGER NOT NULL,
+                        isOpen INTEGER NOT NULL,
+                        openingNotes TEXT NOT NULL,
+                        closingNotes TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cash_shifts_openedAt ON cash_shifts(openedAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cash_shifts_isOpen ON cash_shifts(isOpen)")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS cash_shift_movements (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        shiftId INTEGER NOT NULL,
+                        type TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        reason TEXT NOT NULL,
+                        performedBy TEXT NOT NULL,
+                        date INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cash_shift_movements_shiftId ON cash_shift_movements(shiftId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cash_shift_movements_date ON cash_shift_movements(date)")
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS folio_sequences (
+                        sequenceKey TEXT NOT NULL PRIMARY KEY,
+                        lastNumber INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+
+                var maxVenta = 0L
+                var maxCotizacion = 0L
+                db.query("SELECT folio, type FROM sales").use { cursor ->
+                    val folioIdx = cursor.getColumnIndexOrThrow("folio")
+                    val typeIdx = cursor.getColumnIndexOrThrow("type")
+                    while (cursor.moveToNext()) {
+                        val folio = cursor.getString(folioIdx) ?: ""
+                        val type = cursor.getString(typeIdx) ?: ""
+                        if (type == SaleType.COTIZACION.name || folio.startsWith(PREFIX_COTIZACION, ignoreCase = true)) {
+                            val num = extractNumericSuffix(folio, PREFIX_COTIZACION)
+                            if (num > maxCotizacion) maxCotizacion = num
+                        } else {
+                            val num = extractNumericSuffix(folio, PREFIX_VENTA)
+                            if (num > maxVenta) maxVenta = num
+                        }
+                    }
+                }
+
+                var maxCompra = 0L
+                db.query("SELECT folio FROM purchases").use { cursor ->
+                    val folioIdx = cursor.getColumnIndexOrThrow("folio")
+                    while (cursor.moveToNext()) {
+                        val folio = cursor.getString(folioIdx) ?: ""
+                        val num = extractNumericSuffix(folio, PREFIX_COMPRA)
+                        if (num > maxCompra) maxCompra = num
+                    }
+                }
+
+                db.execSQL(
+                    "INSERT OR REPLACE INTO folio_sequences (sequenceKey, lastNumber) VALUES (?, ?)",
+                    arrayOf<Any>(KEY_VENTA, maxVenta)
+                )
+                db.execSQL(
+                    "INSERT OR REPLACE INTO folio_sequences (sequenceKey, lastNumber) VALUES (?, ?)",
+                    arrayOf<Any>(KEY_COTIZACION, maxCotizacion)
+                )
+                db.execSQL(
+                    "INSERT OR REPLACE INTO folio_sequences (sequenceKey, lastNumber) VALUES (?, ?)",
+                    arrayOf<Any>(KEY_COMPRA, maxCompra)
+                )
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE inventory_items ADD COLUMN isRawMaterial INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    """
+                    UPDATE inventory_items
+                    SET isRawMaterial = 1
+                    WHERE type = 'PRODUCTO'
+                      AND isWaste = 0
+                      AND (
+                        LOWER(category) LIKE '%materia prima%' OR
+                        LOWER(category) LIKE '%insumo%' OR
+                        LOWER(category) LIKE '%ingrediente%' OR
+                        LOWER(category) LIKE '%empaque%' OR
+                        LOWER(category) LIKE '%granel%' OR
+                        LOWER(notes) LIKE '%materia prima%' OR
+                        LOWER(name) LIKE '%materia prima%'
+                      )
+                    """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS inventory_movements (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        itemId INTEGER NOT NULL,
+                        itemCode TEXT NOT NULL,
+                        itemName TEXT NOT NULL,
+                        movementType TEXT NOT NULL,
+                        quantityDelta REAL NOT NULL,
+                        previousStock REAL NOT NULL,
+                        newStock REAL NOT NULL,
+                        referenceFolio TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        performedBy TEXT NOT NULL,
+                        date INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_inventory_movements_itemId ON inventory_movements(itemId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_inventory_movements_date ON inventory_movements(date)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_inventory_movements_movementType ON inventory_movements(movementType)")
+            }
+        }
+
+        fun extractNumericSuffix(folio: String, expectedPrefix: String): Long {
+            val clean = folio.trim()
+            if (clean.isEmpty()) return 0L
+            val afterPrefix = if (clean.startsWith(expectedPrefix, ignoreCase = true)) {
+                clean.substring(expectedPrefix.length)
+            } else {
+                // Only match compatible numeric suffix if exact prefix matches or fallback if digits after '-'
+                return 0L
+            }
+            return afterPrefix.trim().toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        }
+
+        fun deriveFolioSequences(
+            sales: List<Sale>,
+            purchases: List<Purchase>,
+            existing: List<FolioSequence> = emptyList()
+        ): List<FolioSequence> {
+            val existingMap = existing.associateBy { it.sequenceKey }
+            val maxVentaFromSales = sales
+                .filter { it.type == SaleType.VENTA }
+                .maxOfOrNull { extractNumericSuffix(it.folio, PREFIX_VENTA) } ?: 0L
+            val maxCotFromSales = sales
+                .filter { it.type == SaleType.COTIZACION }
+                .maxOfOrNull { extractNumericSuffix(it.folio, PREFIX_COTIZACION) } ?: 0L
+            val maxCompraFromPurchases = purchases
+                .maxOfOrNull { extractNumericSuffix(it.folio, PREFIX_COMPRA) } ?: 0L
+
+            return listOf(
+                FolioSequence(
+                    sequenceKey = KEY_VENTA,
+                    lastNumber = maxOf(existingMap[KEY_VENTA]?.lastNumber ?: 0L, maxVentaFromSales)
+                ),
+                FolioSequence(
+                    sequenceKey = KEY_COTIZACION,
+                    lastNumber = maxOf(existingMap[KEY_COTIZACION]?.lastNumber ?: 0L, maxCotFromSales)
+                ),
+                FolioSequence(
+                    sequenceKey = KEY_COMPRA,
+                    lastNumber = maxOf(existingMap[KEY_COMPRA]?.lastNumber ?: 0L, maxCompraFromPurchases)
+                )
+            )
+        }
+
+        internal fun readSqliteUserVersion(dbFile: File): Int? {
+            if (!dbFile.exists() || dbFile.length() < 64L) return null
+            return try {
+                RandomAccessFile(dbFile, "r").use { raf ->
+                    val header = ByteArray(16)
+                    raf.seek(0L)
+                    raf.readFully(header)
+                    val magic = String(header, Charsets.US_ASCII)
+                    if (!magic.startsWith("SQLite format 3")) return null
+                    val versionBytes = ByteArray(4)
+                    raf.seek(60L)
+                    raf.readFully(versionBytes)
+                    ByteBuffer.wrap(versionBytes).int
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        internal fun salvageLegacyV1DatabaseIfPresent(context: Context, dbName: String) {
+            val dbFile = context.getDatabasePath(dbName)
+            val userVersion = readSqliteUserVersion(dbFile) ?: return
+            if (userVersion == 1) {
+                val backupDir = File(context.filesDir, "db_safety_backup").apply { mkdirs() }
+                val stamp = System.currentTimeMillis()
+                val salvageMain = File(backupDir, "${dbName}_v1_$stamp.db")
+                dbFile.copyTo(salvageMain, overwrite = true)
+                listOf("-wal", "-shm", "-journal").forEach { suffix ->
+                    val sidecar = File("${dbFile.absolutePath}$suffix")
+                    if (sidecar.exists()) {
+                        sidecar.copyTo(File(backupDir, "${dbName}_v1_${stamp}.db$suffix"), overwrite = true)
+                    }
+                }
+                throw IllegalStateException(
+                    "Se detectó una base de datos heredada v1 sin migración verificable. Se guardó una copia de seguridad en ${salvageMain.absolutePath} para evitar borrado destructivo."
+                )
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): CajaMaestraDatabase {
             return INSTANCE ?: synchronized(this) {
+                salvageLegacyV1DatabaseIfPresent(context.applicationContext, "caja_maestra_db")
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     CajaMaestraDatabase::class.java,
                     "caja_maestra_db"
                 )
-                    .fallbackToDestructiveMigration()
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .addCallback(DatabaseCallback(scope))
                     .build()
                 INSTANCE = instance
@@ -68,7 +318,7 @@ abstract class CajaMaestraDatabase : RoomDatabase() {
                     email = "carlos@cajamaestra.pos",
                     address = "Calle Reforma #45",
                     role = UserRole.DUENO,
-                    pin = "1234"
+                    pin = ""
                 )
             )
             dao.insertEmployee(
@@ -80,7 +330,7 @@ abstract class CajaMaestraDatabase : RoomDatabase() {
                     email = "laura@cajamaestra.pos",
                     address = "Av. Hidalgo #120",
                     role = UserRole.ADMINISTRADOR,
-                    pin = "2222"
+                    pin = ""
                 )
             )
             dao.insertEmployee(
@@ -92,7 +342,7 @@ abstract class CajaMaestraDatabase : RoomDatabase() {
                     email = "pedro@cajamaestra.pos",
                     address = "Col. Narvarte #78",
                     role = UserRole.TRABAJADOR,
-                    pin = "3333"
+                    pin = ""
                 )
             )
 
@@ -236,7 +486,8 @@ abstract class CajaMaestraDatabase : RoomDatabase() {
                     minStock = 6.0,
                     category = "Insumos POS",
                     unit = "Paq",
-                    type = ItemType.PRODUCTO
+                    type = ItemType.PRODUCTO,
+                    isRawMaterial = true
                 )
             )
             dao.insertItem(
@@ -432,6 +683,15 @@ abstract class CajaMaestraDatabase : RoomDatabase() {
                     dueDate = now + 3600000L * 96,
                     isReturnedOrPaid = false,
                     notes = "Evento de fin de semana"
+                )
+            )
+
+            // Seed initial atomic folio high-water marks matching historical seed records
+            dao.insertAllFolioSequences(
+                listOf(
+                    FolioSequence(KEY_VENTA, 103L),
+                    FolioSequence(KEY_COTIZACION, 45L),
+                    FolioSequence(KEY_COMPRA, 202L)
                 )
             )
         }
